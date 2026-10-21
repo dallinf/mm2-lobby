@@ -36,9 +36,7 @@ public sealed class ZeroTierClient : IZeroTierClient
         using (json)
         {
             var root = json.RootElement;
-            var nodeId = root.TryGetProperty("address", out var address)
-                ? address.GetString()
-                : null;
+            var nodeId = StringOrNull(root, "address");
             if (string.IsNullOrWhiteSpace(nodeId)) return null;
 
             var online = root.TryGetProperty("online", out var flag)
@@ -61,12 +59,12 @@ public sealed class ZeroTierClient : IZeroTierClient
         {
             foreach (var entry in json.RootElement.EnumerateArray())
             {
-                var id = entry.TryGetProperty("nwid", out var nwid) ? nwid.GetString() : null;
+                if (entry.ValueKind != JsonValueKind.Object) continue;
+
+                var id = StringOrNull(entry, "nwid");
                 if (!string.Equals(id, networkId, StringComparison.OrdinalIgnoreCase)) continue;
 
-                var status = entry.TryGetProperty("status", out var s)
-                    ? s.GetString() ?? string.Empty
-                    : string.Empty;
+                var status = StringOrNull(entry, "status") ?? string.Empty;
 
                 var (address, prefix) = FirstIPv4(entry);
                 return new ZeroTierNetwork(networkId.ToLowerInvariant(), status, address, prefix);
@@ -91,10 +89,12 @@ public sealed class ZeroTierClient : IZeroTierClient
             var map = new Dictionary<string, LinkQuality>(StringComparer.OrdinalIgnoreCase);
             foreach (var peer in json.RootElement.EnumerateArray())
             {
-                var role = peer.TryGetProperty("role", out var r) ? r.GetString() : null;
+                if (peer.ValueKind != JsonValueKind.Object) continue;
+
+                var role = StringOrNull(peer, "role");
                 if (!string.Equals(role, "LEAF", StringComparison.OrdinalIgnoreCase)) continue;
 
-                var nodeId = peer.TryGetProperty("address", out var a) ? a.GetString() : null;
+                var nodeId = StringOrNull(peer, "address");
                 if (string.IsNullOrWhiteSpace(nodeId)) continue;
 
                 map[nodeId.ToLowerInvariant()] =
@@ -120,6 +120,14 @@ public sealed class ZeroTierClient : IZeroTierClient
         }
     }
 
+    private static string? StringOrNull(JsonElement parent, string name)
+    {
+        if (parent.ValueKind != JsonValueKind.Object) return null;
+        if (!parent.TryGetProperty(name, out var value)) return null;
+
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    }
+
     private static (IPAddress? Address, int PrefixLength) FirstIPv4(JsonElement network)
     {
         if (!network.TryGetProperty("assignedAddresses", out var assigned)
@@ -130,7 +138,7 @@ public sealed class ZeroTierClient : IZeroTierClient
 
         foreach (var entry in assigned.EnumerateArray())
         {
-            var text = entry.GetString();
+            var text = entry.ValueKind == JsonValueKind.String ? entry.GetString() : null;
             if (text is null) continue;
 
             var slash = text.IndexOf('/');
@@ -157,6 +165,8 @@ public sealed class ZeroTierClient : IZeroTierClient
 
         foreach (var path in paths.EnumerateArray())
         {
+            if (path.ValueKind != JsonValueKind.Object) continue;
+
             var active = path.TryGetProperty("active", out var a)
                 && a.ValueKind == JsonValueKind.True;
             var expired = path.TryGetProperty("expired", out var e)

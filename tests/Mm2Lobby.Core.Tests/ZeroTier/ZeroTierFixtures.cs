@@ -46,4 +46,25 @@ public static class ZeroTierFixtures
                 "lastReceive":1761000000000,"preferred":false}],
       "role":"LEAF","version":"1.14.0"}]
     """;
+
+    public const string InfoNumericAddress = """
+    {"address":123,"online":true}
+    """;
+
+    public const string ListNetworksNullEntry = """
+    [null]
+    """;
+
+    public const string ListNetworksNumericAddress = """
+    [{"nwid":"0123456789abcdef","status":"OK","assignedAddresses":[42]}]
+    """;
+
+    public const string ListPeersNonObjects = """
+    [null,1,"x"]
+    """;
+
+    public const string ListPeersNullPath = """
+    [{"address":"ee00112233","latency":5,"paths":[null],"role":"LEAF",
+      "version":"1.14.0"}]
+    """;
 }

@@ -135,4 +135,55 @@ public class ZeroTierClientTests
 
         Assert.Empty(await Build(runner).GetLinkQualityAsync(default));
     }
+
+    [Fact]
+    public async Task GetStatusAsync_returns_null_when_the_address_is_not_a_string()
+    {
+        var runner = new FakeProcessRunner()
+            .ReturnsJson("zerotier-cli", "-j info", ZeroTierFixtures.InfoNumericAddress);
+
+        Assert.Null(await Build(runner).GetStatusAsync(default));
+    }
+
+    [Fact]
+    public async Task GetNetworkAsync_returns_null_when_the_array_holds_a_non_object()
+    {
+        var runner = new FakeProcessRunner()
+            .ReturnsJson("zerotier-cli", "-j listnetworks", ZeroTierFixtures.ListNetworksNullEntry);
+
+        Assert.Null(await Build(runner).GetNetworkAsync(NetworkId, default));
+    }
+
+    [Fact]
+    public async Task GetLinkQualityAsync_returns_an_empty_map_when_the_array_holds_non_objects()
+    {
+        var runner = new FakeProcessRunner()
+            .ReturnsJson("zerotier-cli", "-j listpeers", ZeroTierFixtures.ListPeersNonObjects);
+
+        Assert.Empty(await Build(runner).GetLinkQualityAsync(default));
+    }
+
+    [Fact]
+    public async Task GetLinkQualityAsync_treats_a_peer_with_a_non_object_path_as_relayed()
+    {
+        var runner = new FakeProcessRunner()
+            .ReturnsJson("zerotier-cli", "-j listpeers", ZeroTierFixtures.ListPeersNullPath);
+
+        var quality = await Build(runner).GetLinkQualityAsync(default);
+
+        Assert.Equal(LinkQuality.Relayed, quality["ee00112233"]);
+    }
+
+    [Fact]
+    public async Task GetNetworkAsync_returns_a_null_address_when_assigned_addresses_holds_a_non_string()
+    {
+        var runner = new FakeProcessRunner()
+            .ReturnsJson("zerotier-cli", "-j listnetworks", ZeroTierFixtures.ListNetworksNumericAddress);
+
+        var network = await Build(runner).GetNetworkAsync(NetworkId, default);
+
+        Assert.NotNull(network);
+        Assert.Null(network!.Address);
+        Assert.False(network.IsJoined);
+    }
 }
