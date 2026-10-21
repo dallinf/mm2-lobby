@@ -23,8 +23,33 @@ public class LobbyServiceTests : IDisposable
         if (Directory.Exists(_folder)) Directory.Delete(_folder, recursive: true);
     }
 
-    private LobbyService Build()
+    private sealed class BlockingZeroTierClient : IZeroTierClient
     {
+        private readonly FakeZeroTierClient _inner = new();
+
+        public TaskCompletionSource Open { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int StatusCalls { get; private set; }
+
+        public async Task<ZeroTierStatus?> GetStatusAsync(CancellationToken ct)
+        {
+            StatusCalls++;
+            await Open.Task;
+            return await _inner.GetStatusAsync(ct);
+        }
+
+        public Task<ZeroTierNetwork?> GetNetworkAsync(string networkId, CancellationToken ct)
+            => _inner.GetNetworkAsync(networkId, ct);
+
+        public Task<IReadOnlyDictionary<string, LinkQuality>> GetLinkQualityAsync(
+            CancellationToken ct)
+            => _inner.GetLinkQualityAsync(ct);
+    }
+
+    private LobbyService Build(IZeroTierClient? zeroTier = null)
+    {
+        zeroTier ??= _zeroTier;
         var store = Store;
         store.Save(new AppConfig
         {
@@ -34,7 +59,7 @@ public class LobbyServiceTests : IDisposable
 
         var table = new PeerTable(LobbyService.PeerExpiry, () => _now);
         return new LobbyService(
-            _zeroTier, _transport, table, new PeerDirectory(_zeroTier, table),
+            zeroTier, _transport, table, new PeerDirectory(zeroTier, table),
             store, "1.0.0", () => _now);
     }
 
@@ -249,5 +274,56 @@ public class LobbyServiceTests : IDisposable
             () => service.StartAsync(default));
 
         Assert.Equal(1, _transport.SubscriberCount);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_raises_PeersChanged_when_the_name_save_fails_and_saves_on_the_next_cycle()
+    {
+        await using var service = Build();
+        await service.StartAsync(default);
+        _transport.Deliver(
+            new Announcement
+            {
+                NodeId = "bb11223344", Player = "chris", Address = "10.147.17.9",
+            }.ToBytes(),
+            IPAddress.Parse("10.147.17.9"));
+        IReadOnlyList<Peer>? seen = null;
+        service.PeersChanged += peers => seen = peers;
+        var configPath = Path.Combine(_folder, "config.json");
+
+        File.SetAttributes(configPath, FileAttributes.ReadOnly);
+        try
+        {
+            await Assert.ThrowsAnyAsync<Exception>(() => service.RunCycleAsync(default));
+        }
+        finally
+        {
+            File.SetAttributes(configPath, FileAttributes.Normal);
+        }
+
+        Assert.NotNull(seen);
+        Assert.Equal("chris", Assert.Single(seen).DisplayName);
+        Assert.DoesNotContain("bb11223344", Store.Load().RememberedNames.Keys);
+
+        await service.RunCycleAsync(default);
+
+        Assert.Equal("chris", Store.Load().RememberedNames["bb11223344"]);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_does_not_start_a_second_cycle_while_one_is_running()
+    {
+        var client = new BlockingZeroTierClient();
+        await using var service = Build(client);
+
+        var first = service.RunCycleAsync(default);
+        var second = service.RunCycleAsync(default);
+
+        Assert.Equal(1, client.StatusCalls);
+
+        client.Open.SetResult();
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(2, client.StatusCalls);
     }
 }

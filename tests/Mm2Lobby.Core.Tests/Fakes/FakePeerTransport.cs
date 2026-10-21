@@ -17,6 +17,11 @@ public sealed class FakePeerTransport : IPeerTransport
 
     public Task StartAsync(int port, CancellationToken ct)
     {
+        if (StartedPort is not null)
+        {
+            throw new InvalidOperationException("The transport has already started.");
+        }
+
         StartedPort = port;
         return Task.CompletedTask;
     }

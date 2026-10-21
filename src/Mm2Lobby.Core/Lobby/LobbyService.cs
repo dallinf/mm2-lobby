@@ -32,6 +32,8 @@ public sealed class LobbyService : IAsyncDisposable
     private DateTimeOffset? _hostingSince;
     private CancellationTokenSource? _loop;
     private Task? _pump;
+    private readonly SemaphoreSlim _cycleGate = new(1, 1);
+    private bool _namesNeedSave;
     private bool _started;
     private bool _disposed;
 
@@ -64,6 +66,11 @@ public sealed class LobbyService : IAsyncDisposable
 
     public string DisplayName => _config.DisplayName;
 
+    /// <summary>
+    /// Raised on the thread that runs the cycle. The pump thread runs every
+    /// cycle after the first, and it is not the UI thread. A subscriber that
+    /// changes the user interface must move to the UI thread first.
+    /// </summary>
     public event Action<IReadOnlyList<Peer>>? PeersChanged;
 
     /// <summary>
@@ -97,16 +104,24 @@ public sealed class LobbyService : IAsyncDisposable
 
     public async Task RunCycleAsync(CancellationToken ct)
     {
-        _status = await _zeroTier.GetStatusAsync(ct);
-        _network = await _zeroTier.GetNetworkAsync(_config.ZeroTierNetworkId, ct);
+        await _cycleGate.WaitAsync(ct);
+        try
+        {
+            _status = await _zeroTier.GetStatusAsync(ct);
+            _network = await _zeroTier.GetNetworkAsync(_config.ZeroTierNetworkId, ct);
 
-        await AnnounceAsync(ct);
+            await AnnounceAsync(ct);
 
-        Peers = await _directory.GetPeersAsync(
-            _status?.NodeId ?? string.Empty, _config.RememberedNames, ct);
+            Peers = await _directory.GetPeersAsync(
+                _status?.NodeId ?? string.Empty, _config.RememberedNames, ct);
 
-        RememberNames();
-        PeersChanged?.Invoke(Peers);
+            PeersChanged?.Invoke(Peers);
+            RememberNames();
+        }
+        finally
+        {
+            _cycleGate.Release();
+        }
     }
 
     public void StartHosting() => _hostingSince = _clock();
@@ -115,21 +130,23 @@ public sealed class LobbyService : IAsyncDisposable
 
     private async Task AnnounceAsync(CancellationToken ct)
     {
-        if (_status is null || _network?.Address is null) return;
+        var status = _status;
+        var network = _network;
+        if (status is null || network?.Address is null) return;
 
         var hostingSince = _hostingSince;
 
         var announcement = new Announcement
         {
             AppVersion = _appVersion,
-            NodeId = _status.NodeId,
+            NodeId = status.NodeId,
             Player = _config.DisplayName,
-            Address = _network.Address.ToString(),
+            Address = network.Address.ToString(),
             Hosting = hostingSince is not null,
             StartedAt = hostingSince,
         };
 
-        var destination = IPv4Math.BroadcastAddress(_network.Address, _network.PrefixLength);
+        var destination = IPv4Math.BroadcastAddress(network.Address, network.PrefixLength);
         await _transport.SendAsync(announcement.ToBytes(), destination, Port, ct);
     }
 
@@ -144,8 +161,6 @@ public sealed class LobbyService : IAsyncDisposable
 
     private void RememberNames()
     {
-        var changed = false;
-
         foreach (var peer in Peers.Where(peer => peer.AppRunning))
         {
             if (_config.RememberedNames.TryGetValue(peer.NodeId, out var known)
@@ -155,10 +170,13 @@ public sealed class LobbyService : IAsyncDisposable
             }
 
             _config.RememberedNames[peer.NodeId] = peer.DisplayName;
-            changed = true;
+            _namesNeedSave = true;
         }
 
-        if (changed) _configStore.Save(_config);
+        if (!_namesNeedSave) return;
+
+        _configStore.Save(_config);
+        _namesNeedSave = false;
     }
 
     private async Task PumpAsync(CancellationToken ct)
@@ -204,7 +222,8 @@ public sealed class LobbyService : IAsyncDisposable
             }
             catch (OperationCanceledException)
             {
-                // Expected on shutdown.
+                // This catch is a defence. The pump handles its own errors,
+                // so it is not expected to fault.
             }
         }
 
