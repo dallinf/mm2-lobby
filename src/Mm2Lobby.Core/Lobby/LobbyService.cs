@@ -117,14 +117,16 @@ public sealed class LobbyService : IAsyncDisposable
     {
         if (_status is null || _network?.Address is null) return;
 
+        var hostingSince = _hostingSince;
+
         var announcement = new Announcement
         {
             AppVersion = _appVersion,
             NodeId = _status.NodeId,
             Player = _config.DisplayName,
             Address = _network.Address.ToString(),
-            Hosting = IsHosting,
-            StartedAt = _hostingSince,
+            Hosting = hostingSince is not null,
+            StartedAt = hostingSince,
         };
 
         var destination = IPv4Math.BroadcastAddress(_network.Address, _network.PrefixLength);
