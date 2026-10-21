@@ -90,6 +90,7 @@ public class ConfigStoreTests : IDisposable
 
         var config = new ConfigStore(Path_).Load();
 
+        Assert.Equal("x", config.DisplayName);
         Assert.Empty(config.RememberedNames);
     }
 
@@ -102,17 +103,18 @@ public class ConfigStoreTests : IDisposable
         var config = new ConfigStore(Path_).Load();
 
         Assert.Single(config.RememberedNames);
-        Assert.Equal(config.RememberedNames["AB11"], config.RememberedNames["ab11"]);
+        Assert.Equal("y", config.RememberedNames["ab11"]);
     }
 
     [Fact]
     public void Load_skips_a_remembered_name_with_a_null_value()
     {
         Directory.CreateDirectory(_folder);
-        File.WriteAllText(Path_, """{"rememberedNames":{"bb11223344":null}}""");
+        File.WriteAllText(Path_, """{"displayName":"x","rememberedNames":{"bb11223344":null}}""");
 
         var config = new ConfigStore(Path_).Load();
 
+        Assert.Equal("x", config.DisplayName);
         Assert.Empty(config.RememberedNames);
     }
 
