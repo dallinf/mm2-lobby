@@ -1,0 +1,463 @@
+# MM2 Lobby — Design
+
+Date: 2026-10-21
+Status: Approved for planning
+Revision: 2 — peer discovery moved from HTTP polling to UDP broadcast. See
+section 4.2 for the reason.
+
+## 1. Purpose
+
+Midtown Madness 2 has no working matchmaking service of its own. The MSN Gaming
+Zone closed in 2006. GameRanger replaced it, but GameRanger is one company's
+service, it has no status page, and when it fails a private group of friends
+cannot race.
+
+MM2 Lobby replaces GameRanger for one known group of friends. It lists who is
+online, lets one player claim the host role, and starts the game. It runs no
+server of its own, so it has nothing central that can fail.
+
+## 2. Scope
+
+### In scope
+
+- One Windows desktop application.
+- Midtown Madness 2 only.
+- A fixed, private group of friends who trust each other.
+- A room list, a host role, and a game launcher.
+- A setup screen that finds and fixes the common blockers.
+
+### Out of scope
+
+The following are deliberate omissions. Do not add them without a new design.
+
+| Omitted | Reason |
+|---|---|
+| Accounts, a central server, a database | The virtual network already carries who is online. A server would reintroduce the single point of failure this project exists to remove. |
+| Text chat and voice chat | The group already uses Discord. |
+| Rankings, statistics, player profiles | Nobody asked for them. |
+| Support for a second game | Hard-code MM2. Generalise only when a second game arrives. |
+| Router setup help, port forwarding | The virtual network removes the need. |
+| macOS, Linux, Wine, virtual machines | Every player runs Windows 10 or 11. |
+| A player cap | MM2 sets its own cap. The app displays the host's session but never enforces a limit. |
+| Protection against a hostile group member | Every member of the ZeroTier network is a trusted friend. The app validates datagrams, but it does not defend against an insider. |
+
+## 3. How MM2 multiplayer works
+
+These facts drive the whole design. Verify each one during the first manual
+test.
+
+- MM2 uses DirectPlay. Its connection choices are IPX, TCP/IP, serial cable,
+  and modem.
+- The TCP/IP path asks the joining player to type the host's IP address. It
+  does not rely on LAN broadcast discovery. Broadcast discovery is the part
+  that usually breaks across a virtual network, so MM2 avoids the hardest
+  problem for us.
+- DirectPlay needs TCP 47624 and both TCP and UDP in the range 2300 to 2400.
+  Microsoft KB Q240429 lists Midtown Madness 2 version 2.0 among the affected
+  titles. A virtual network carries these ports without any router change, but
+  the Windows firewall still inspects them on the local machine.
+- Windows 10 and Windows 11 ship the DirectPlay component turned off. Each
+  player must turn it on once.
+- DirectPlay provides a lobby-launch interface. A lobby application can start
+  the game and supply the session details, so the player never sees the address
+  dialog. This is how GameRanger removes the typing. Phase two uses it.
+
+## 4. Architecture
+
+A single Windows program. No server. No database. Each copy of the app
+announces itself on the virtual network and listens for the others.
+
+```
+  Your PC                                      Friend's PC
+  ┌──────────────────────────┐                 ┌──────────────────────────┐
+  │ MM2 Lobby                │                 │ MM2 Lobby                │
+  │  ZeroTierClient ─────────┼─ reads local ───┼──── ZeroTierClient       │
+  │  PeerTransport (UDP) ◀═══╪══ announcements ═╪═══▶ PeerTransport (UDP)  │
+  │  PeerTable               │    every 2 s    │  PeerTable               │
+  │  PeerDirectory           │                 │  PeerDirectory           │
+  │  LobbyService            │                 │  LobbyService            │
+  │  GameLauncher            │                 │  GameLauncher            │
+  └───────────┬──────────────┘                 └───────────┬──────────────┘
+              │                                            │
+  ┌───────────▼──────────────┐                 ┌───────────▼──────────────┐
+  │ ZeroTier virtual adapter │◀═══ encrypted ═▶│ ZeroTier virtual adapter │
+  └───────────┬──────────────┘   direct, or    └───────────┬──────────────┘
+              │                  relayed                   │
+  ┌───────────▼──────────────┐                 ┌───────────▼──────────────┐
+  │ midtown2.exe (DirectPlay)│                 │ midtown2.exe             │
+  └──────────────────────────┘                 └──────────────────────────┘
+```
+
+### 4.1 Network layer
+
+Use ZeroTier. The free plan allows 25 nodes and sets no limit on the number of
+people. A friend joins by entering one network ID. You approve the machine in
+the ZeroTier console. ZeroTier replaces three hard problems that GameRanger
+solved by hand: it traverses home routers, it falls back to its own relays when
+a direct path fails, and it gives every player a stable private address.
+
+### 4.2 Why peer discovery uses broadcast, not HTTP
+
+Revision 1 of this spec had each app serve an HTTP endpoint and had the others
+poll it. That cannot work. A ZeroTier node knows its own assigned address, but
+it does not know the addresses the controller gave the other members.
+`zerotier-cli listpeers` returns node IDs and path information only. The map
+from member to address lives in the ZeroTier Central API, and reading it would
+add both an API token and a central service to the path — the exact thing this
+project removes.
+
+ZeroTier gives a virtual Ethernet network, and it enables broadcast by default.
+So each app sends a small UDP announcement to the subnet broadcast address
+every 2 seconds, and the others listen. This needs no address list, no server,
+and no token. It also removes the HTTP server and the poller from the design.
+
+ZeroTier's layer-2 behaviour is therefore load-bearing. Tailscale is **not** a
+drop-in substitute: it is IP-only, it carries no broadcast, and a Tailscale
+build would have to read its coordination server's API to learn the peer list.
+Its free plan also allows only 3 people. If you ever switch, expect to replace
+peer discovery, not one class.
+
+### 4.3 Technology
+
+- .NET 10, C#. .NET 8 leaves long-term support in November 2026, so the
+  project targets .NET 10, which Microsoft supports to November 2028. Every
+  API here, including `System.Net.IPNetwork`, arrived in .NET 8 and remains
+  in .NET 10.
+- `Mm2Lobby.Core` targets `net10.0` and holds every piece of logic. It contains
+  no WPF and no Windows-only API. It therefore builds and tests on macOS,
+  which is where this project is being designed.
+- `Mm2Lobby.Windows` targets `net10.0-windows` and holds the registry, DISM,
+  firewall, and process code.
+- `Mm2Lobby.App` targets `net10.0-windows` and holds the WPF window.
+- `xunit` for tests. Every test lives in `Mm2Lobby.Core.Tests`, which targets
+  `net10.0`.
+- Published as one self-contained executable. A friend downloads one file.
+
+Phase two must call the DirectPlay COM interfaces, and C# calls COM with the
+least work. That is why the stack is .NET rather than Go or Rust.
+
+## 5. Components
+
+Each component takes its dependencies through an interface, so each one tests
+alone.
+
+### 5.1 ZeroTierClient
+
+**What it does.** Reads the local ZeroTier state.
+
+```csharp
+public interface IZeroTierClient
+{
+    Task<ZeroTierStatus?> GetStatusAsync(CancellationToken ct);
+    Task<ZeroTierNetwork?> GetNetworkAsync(string networkId, CancellationToken ct);
+    Task<IReadOnlyDictionary<string, LinkQuality>> GetLinkQualityAsync(CancellationToken ct);
+}
+```
+
+**How it works.** It shells out through `IProcessRunner` to three commands and
+parses their JSON:
+
+| Command | Gives |
+|---|---|
+| `zerotier-cli -j info` | this machine's node ID, and whether the service is online |
+| `zerotier-cli -j listnetworks` | this machine's assigned address, its prefix length, and the network status |
+| `zerotier-cli -j listpeers` | one entry per known node, with its paths |
+
+`LinkQuality` for a node is `Direct` when `listpeers` shows at least one path
+that is active and not expired, `Relayed` when it shows no such path, and
+`Unknown` when the node does not appear in `listpeers` at all.
+
+**It never throws on bad input.** Malformed or absent output returns `null` or
+an empty dictionary. A missing `zerotier-cli` is an expected condition, not a
+crash.
+
+### 5.2 PeerTransport and the announcement
+
+**What it does.** Carries announcements between the apps.
+
+```csharp
+public interface IPeerTransport : IAsyncDisposable
+{
+    event Action<byte[], IPAddress>? DatagramReceived;
+    Task StartAsync(int port, CancellationToken ct);
+    Task SendAsync(byte[] payload, IPAddress destination, int port, CancellationToken ct);
+}
+```
+
+**The datagram.** UTF-8 JSON on UDP port 48200, sent to the subnet broadcast
+address of the ZeroTier network, every 2 seconds:
+
+```json
+{
+  "proto": 1,
+  "appVersion": "1.0.0",
+  "nodeId": "a09acf0233",
+  "player": "dallin",
+  "address": "10.147.17.42",
+  "hosting": true,
+  "startedAt": "2026-10-21T18:04:11Z"
+}
+```
+
+`startedAt` is null when `hosting` is false.
+
+**Binding.** The socket binds to `0.0.0.0` so it receives the directed
+broadcast. That means the player's home network can also send to the port, so
+`PeerTable` rejects every datagram whose source address falls outside the
+ZeroTier subnet. The subnet membership test is the authorisation boundary.
+
+### 5.3 PeerTable
+
+**What it does.** Holds the peers heard recently, and rejects everything else.
+
+```csharp
+public sealed class PeerTable
+{
+    public PeerTable(TimeSpan expiry, Func<DateTimeOffset> clock);
+    public bool Accept(ReadOnlySpan<byte> datagram, IPAddress source, IPNetwork allowed);
+    public IReadOnlyList<LivePeer> GetLive();
+}
+```
+
+`Accept` rejects a datagram when any of these holds. Each rule gets a test.
+
+1. The source address falls outside `allowed`.
+2. The payload is not valid JSON.
+3. `proto` is not 1.
+4. The payload's `address` does not equal the source address.
+5. `player` is empty, or longer than 32 characters.
+6. `nodeId` is empty.
+
+`GetLive` returns the entries heard within `expiry`. The expiry is 6 seconds,
+which is three announcement periods, so one lost datagram never drops a
+player from the list.
+
+### 5.4 PeerDirectory
+
+**What it does.** Builds the room list from the table and the link quality.
+
+```csharp
+public sealed record Peer(
+    string NodeId,
+    string DisplayName,
+    IPAddress? Address,
+    bool IsOnline,
+    bool AppRunning,
+    bool Hosting,
+    DateTimeOffset? StartedAt,
+    LinkQuality Link);
+```
+
+A peer reaches the list by one of three routes, and the window must show all
+three differently:
+
+| Display state | Source | `IsOnline` | `AppRunning` |
+|---|---|---|---|
+| In the lobby | heard in `PeerTable` | true | true |
+| Online, app not running | in `listpeers` as a `LEAF`, not heard | true | false |
+| Offline | in the remembered-names list, neither of the above | false | false |
+
+The remembered-names list maps a node ID to the last display name the app
+heard from it, and it persists in the configuration file. Without it, a friend
+whose app is not running would appear as a bare node ID.
+
+### 5.5 LobbyService
+
+**What it does.** Owns the one refresh cycle for the whole application.
+
+```csharp
+public sealed class LobbyService : IAsyncDisposable
+{
+    public IReadOnlyList<Peer> Peers { get; }
+    public bool IsHosting { get; }
+    public Peer? CurrentHost { get; }
+    public event Action<IReadOnlyList<Peer>>? PeersChanged;
+
+    public Task StartAsync(CancellationToken ct);
+    public Task RunCycleAsync(CancellationToken ct);
+    public void StartHosting();
+    public void StopHosting();
+}
+```
+
+One cycle sends this app's announcement, then rebuilds the peer list, then
+raises `PeersChanged`. `StartAsync` runs `RunCycleAsync` every 2 seconds.
+Tests call `RunCycleAsync` directly, so no test waits on a timer. No other
+component holds a timer.
+
+### 5.6 PreflightCheck
+
+**What it does.** Finds and fixes the blockers before a player hits them
+inside the game. Most support work lands here, so this screen deserves care.
+
+```csharp
+public enum CheckStatus { Pass, Fail, Unavailable }
+
+public sealed record CheckResult(
+    string Name, CheckStatus Status, string Message, string? FixDescription);
+
+public interface ICheck
+{
+    string Name { get; }
+    Task<CheckResult> RunAsync(CancellationToken ct);
+    Task<CheckResult> FixAsync(CancellationToken ct);
+}
+```
+
+`PreflightRunner` runs every check even when an earlier one fails, so the
+player sees the whole list at once rather than one problem per attempt.
+
+| Check | Test | Fix |
+|---|---|---|
+| ZeroTier | `IZeroTierClient` reports the service online and the network status `OK` | Open the download page, or start the service, or show the network ID to join |
+| DirectPlay | `C:\Windows\SysWOW64\dplayx.dll` exists | Run `dism /online /enable-feature /featurename:DirectPlay /all`, with an elevation prompt |
+| MM2 found | Enumerate the values under `HKLM\SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Midtown Madness 2` and take the first that points at an existing `midtown2.exe`; otherwise use the saved path | Open a file picker and save the path |
+| Firewall | `netsh advfirewall firewall show rule name="MM2 Lobby - Midtown Madness 2"` finds the rule | Add inbound and outbound allow rules, with an elevation prompt |
+
+The DirectPlay check reads a file rather than asking DISM, because
+`dism /online /get-featureinfo` needs administrator rights and the check must
+run without them. Verify the file test during the first manual test. If it
+proves wrong, fall back to the DISM query and accept the elevation prompt.
+
+The firewall check matters most. When the firewall blocks the game, MM2 fails
+silently and reports only that it found no host.
+
+### 5.7 GameLauncher
+
+**Phase one.** It starts `midtown2.exe`, then shows a panel with the host's
+address in a large font and the three steps the player must follow. It also
+copies the address to the clipboard as a convenience.
+
+> **Caution:** MM2 draws its own dialogs, so Ctrl+V may not paste into the
+> address field. Assume the player types the address by hand. A ZeroTier
+> address such as `10.147.17.42` is short enough to type. This limitation is
+> the main reason phase two exists.
+
+**Phase two.** It implements a DirectPlay lobby client. It creates
+`IDirectPlayLobby3`, builds a `DPLCONNECTION` that names the TCP/IP service
+provider and carries the host's address, and calls `RunApplication`. The game
+then joins with no dialog. Phase two is Windows-only and is the hardest piece
+of the project. It ships behind the same user interface, so phase one keeps
+working if phase two stalls.
+
+### 5.8 Configuration
+
+One file at `%APPDATA%\Mm2Lobby\config.json`.
+
+```json
+{
+  "displayName": "dallin",
+  "gamePath": "C:\\Program Files (x86)\\Microsoft Games\\Midtown Madness 2\\midtown2.exe",
+  "zeroTierNetworkId": "0123456789abcdef",
+  "rememberedNames": { "bb11223344": "chris" }
+}
+```
+
+`displayName` defaults to the Windows computer name. The player can change it.
+A missing or malformed file loads the defaults rather than failing.
+
+## 6. Data flow
+
+The complete phase-one race:
+
+1. Each player starts the app. Each app begins to announce itself every 2
+   seconds and to listen for the others.
+2. You click **Host a race**. Your announcement now carries `hosting: true`
+   and your ZeroTier address.
+3. Within a few seconds every other app shows your name, your address, and
+   your link quality.
+4. You start MM2 and choose Multiplayer, then TCP/IP, then Host.
+5. A friend clicks **Join**. Their app starts MM2 and shows your address.
+6. They choose Multiplayer, then TCP/IP, then Join, and enter the address.
+
+## 7. Error handling
+
+These are the failures the group will actually meet.
+
+| Failure | What the app does |
+|---|---|
+| ZeroTier is not running | `PreflightCheck` blocks the lobby and offers to start the service |
+| A friend is online but their app is not running | Show the remembered name and "app not running", which the user must be able to tell apart from "offline" |
+| DirectPlay is turned off | `PreflightCheck` blocks and runs the `dism` command |
+| The firewall blocks the game | `PreflightCheck` adds the rule before the player ever starts MM2 |
+| The host's link is relayed, not direct | Show the link quality beside the host's name, the way GameRanger shows a ping estimate, so a player understands a slow race |
+| App versions disagree | The announcement carries `appVersion`. The app warns rather than behaving strangely |
+| A stray datagram arrives from the home network | `PeerTable` rejects it on the subnet test |
+| `zerotier-cli` is missing or its output changes | `ZeroTierClient` returns null or an empty result and the preflight screen explains it. The app never crashes on unexpected output |
+| Two players claim the host role | Both appear as hosting. The group sorts it out in Discord. The app does not arbitrate |
+
+## 8. Testing
+
+### Unit and integration tests
+
+Every test lives in `Mm2Lobby.Core.Tests`, targets `net10.0`, and runs on
+macOS. No test needs Windows, a network, or a real ZeroTier install.
+
+- **ZeroTierClient.** Parse recorded `zerotier-cli` output. Cover a direct
+  peer, a relayed peer, a `PLANET` root that must be excluded, an empty
+  network list, a network the machine has not joined, and malformed output.
+- **PeerTable.** One test per rejection rule in section 5.3. Plus expiry: a
+  peer heard 5 seconds ago is live, one heard 7 seconds ago is not.
+- **PeerDirectory.** Assert the three display states, using a fake
+  `IZeroTierClient` and a hand-filled `PeerTable`.
+- **PeerTransport.** Start two transports on different loopback ports and
+  send a unicast datagram between them. Broadcast itself needs a real ZeroTier
+  network, so it belongs to the manual test.
+- **LobbyService.** Call `RunCycleAsync` directly. Assert the announcement it
+  sends, assert `PeersChanged` fires, and assert `CurrentHost` follows
+  `StartHosting` and `StopHosting`.
+- **PreflightRunner.** Use fake checks. Assert every check runs even when the
+  first one fails.
+- **ConfigStore.** Round-trip a config through a temporary directory. Assert
+  that a missing file and a malformed file both load the defaults.
+- **GameLauncher.** Assert the launch plan it builds. It must never start a
+  process during a test.
+
+### Manual test
+
+No test can prove MM2 connects. Keep this checklist and run it with one friend
+before each release:
+
+1. Broadcast reaches both machines: each lobby lists the other player.
+2. The link quality column shows `Direct` or `Relayed`, not `Unknown`.
+3. The host starts a TCP/IP session in MM2.
+4. The joining player enters the host's address and reaches the lobby screen
+   inside MM2.
+5. A race starts and finishes.
+6. The host leaves, and the joining player sees the lobby return to idle.
+7. One player closes the app. The other shows "app not running" within 10
+   seconds, not "offline".
+
+## 9. Risks
+
+| Risk | Response |
+|---|---|
+| ZeroTier's broadcast is disabled on the network, or its multicast recipient limit drops datagrams | Confirm "Enable Broadcast" in the ZeroTier console. The default limit of 32 recipients far exceeds this group. Step 1 of the manual test proves it |
+| DirectPlay binds to the wrong network adapter when a machine has several | Verify in the first manual test. If it happens, disable the unused adapters during a race, or move the fix to phase two, where the lobby client names the address |
+| The player cannot paste into MM2's address dialog | Expected. Show the address in a large font and plan phase two |
+| The DirectPlay file test is wrong | Fall back to `dism /online /get-featureinfo` and accept the elevation prompt |
+| ZeroTier changes its command-line output | `ZeroTierClient` isolates the parse. Switch to the local HTTP service API if the CLI proves unstable |
+| ZeroTier's own service fails | The same failure class as GameRanger, but ZeroTier's record is far better, and existing direct paths keep working. Self-host the controller later if this ever matters |
+| MM2 version mismatch between players | Out of scope for the app. The group agrees on one game version |
+
+## 10. Build order
+
+1. `ZeroTierClient`. This proves the app can read the virtual network.
+2. `PeerTable`, `PeerTransport`, and `PeerDirectory`. This gives the room list.
+3. `LobbyService`. This gives the host role.
+4. `ConfigStore` and `PreflightRunner`. This makes the app usable by a friend
+   rather than by you.
+5. `GameLauncher`, phase one. The first real race.
+6. `GameLauncher`, phase two. One-click join through the DirectPlay lobby
+   interface.
+
+Steps 1 to 5 are the deliverable. Step 6 is a separate piece of work and gets
+its own plan.
+
+## 11. Sources
+
+- [Midtown Madness 2 FAQ, Racing Madness wiki](https://racingmadness.fandom.com/wiki/Midtown_Madness_2_FAQ)
+- [Multiplayer (Midtown Madness), Racing Madness wiki](https://racingmadness.fandom.com/wiki/Multiplayer_(Midtown_Madness))
+- [Microsoft KB Q240429, DirectX ports required to play on a network](https://jeffpar.github.io/kbarchive/kb/240/Q240429/)
+- [Midtown Madness 2 eXtreme FAQ](https://www.mm2x.com/modules.php?name=FAQ&file=index&myfaq=yes&id_cat=3)
+- [GameRanger, Wikipedia](https://en.wikipedia.org/wiki/GameRanger)
