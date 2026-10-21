@@ -4,8 +4,10 @@ using Mm2Lobby.Core.ZeroTier;
 namespace Mm2Lobby.Core.Peers;
 
 /// <summary>
-/// One row in the room list. The pair (IsOnline, AppRunning) gives the three
-/// display states: in the lobby, online but the app is not running, offline.
+/// This record holds one row of the room list. The pair (IsOnline, AppRunning)
+/// gives the three display states. The states are: in the lobby; online, but
+/// the app is not running; offline. AppVersion is the empty string for a peer
+/// that sent no announcement.
 /// </summary>
 public sealed record Peer(
     string NodeId,

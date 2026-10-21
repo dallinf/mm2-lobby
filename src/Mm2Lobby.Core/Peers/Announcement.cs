@@ -4,8 +4,8 @@ using System.Text.Json.Serialization;
 namespace Mm2Lobby.Core.Peers;
 
 /// <summary>
-/// What one app broadcasts about itself every 2 seconds. Keep it small: it
-/// travels in a single UDP datagram.
+/// This record holds the data that one app sends about itself every 2 seconds.
+/// Keep the record small. It must fit in one UDP datagram.
 /// </summary>
 public sealed record Announcement
 {

@@ -9,8 +9,9 @@ public sealed class AppConfig
     public string ZeroTierNetworkId { get; set; } = string.Empty;
 
     /// <summary>
-    /// Maps a ZeroTier node ID to the last display name heard from it, so a
-    /// friend whose app is closed still appears by name.
+    /// This property holds the last display name that the app received from
+    /// each ZeroTier node ID. The lobby uses the map to show a peer whose app
+    /// is closed.
     /// </summary>
     public Dictionary<string, string> RememberedNames { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);

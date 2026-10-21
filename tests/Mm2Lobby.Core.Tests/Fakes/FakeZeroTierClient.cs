@@ -20,9 +20,9 @@ public sealed class FakeZeroTierClient : IZeroTierClient
         => Task.FromResult(Status);
 
     /// <summary>
-    /// Answers Network only for the network that Network names. ZeroTier knows
-    /// nothing about another network, so this fake answers null for one, as
-    /// zerotier-cli does.
+    /// This method answers Network only for the network that Network names.
+    /// ZeroTier knows nothing about another network. So this method answers
+    /// null for another network, as zerotier-cli does.
     /// </summary>
     public Task<ZeroTierNetwork?> GetNetworkAsync(string networkId, CancellationToken ct)
     {

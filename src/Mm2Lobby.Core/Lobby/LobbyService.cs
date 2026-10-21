@@ -6,9 +6,9 @@ using Mm2Lobby.Core.ZeroTier;
 namespace Mm2Lobby.Core.Lobby;
 
 /// <summary>
-/// Owns the one refresh cycle for the whole application. StartAsync runs
-/// RunCycleAsync every CyclePeriod. Tests call RunCycleAsync directly, so no
-/// test waits on a timer, and no other component holds one.
+/// The service owns the one refresh cycle for the whole application. StartAsync
+/// runs RunCycleAsync every CyclePeriod. A test calls RunCycleAsync directly,
+/// so no test waits on a timer. No other class holds a timer.
 /// </summary>
 public sealed class LobbyService : IAsyncDisposable
 {
@@ -32,8 +32,8 @@ public sealed class LobbyService : IAsyncDisposable
     private ZeroTierNetwork? _network;
 
     // The host start time, in UTC ticks. Zero means that this app does not
-    // host. A long holds the value in one word, so a reader cannot see one
-    // half of a new value and one half of the old value.
+    // host. A long holds the value in one word. So a reader cannot see one
+    // half of the new value and one half of the old value.
     private long _hostingSince;
 
     private CancellationTokenSource? _loop;
@@ -45,10 +45,10 @@ public sealed class LobbyService : IAsyncDisposable
 
     /// <summary>
     /// The caller owns the configuration. The process holds one AppConfig, and
-    /// the caller passes that one object here. The service reads the display
-    /// name from it on every cycle, and the service saves it. The service does
-    /// not load it, because a load here would discard a change that the caller
-    /// made, for example the game path.
+    /// the caller passes that object to this constructor. The service reads the
+    /// display name from that object on every cycle. The service also saves the
+    /// object. The service does not load the file, because a load here would
+    /// discard a value that the caller wrote, for example the game path.
     /// </summary>
     public LobbyService(
         IZeroTierClient zeroTier,
@@ -77,9 +77,9 @@ public sealed class LobbyService : IAsyncDisposable
     public bool IsHosting => Volatile.Read(ref _hostingSince) != 0;
 
     /// <summary>
-    /// The peer that hosts a game. This property never returns this machine,
-    /// because Peers never holds this machine. To show that this app hosts, the
-    /// window reads IsHosting and MyAddress.
+    /// The peer that hosts a game. This property never returns this machine.
+    /// Peers never holds this machine. To show that this app hosts, the window
+    /// reads IsHosting and MyAddress.
     /// </summary>
     public Peer? CurrentHost => Peers.FirstOrDefault(peer => peer.Hosting);
 
@@ -88,26 +88,30 @@ public sealed class LobbyService : IAsyncDisposable
     public string DisplayName => _config.DisplayName;
 
     /// <summary>
-    /// The exception from the last cycle that the pump ran, or null when that
-    /// cycle completed. Mm2Lobby.Core has no logger, so this property is the
-    /// one record of a fault.
+    /// The exception from the last cycle that the pump ran. This property is
+    /// null when that cycle completed. Mm2Lobby.Core has no logger, so this
+    /// property holds the only record of a failed cycle.
     /// </summary>
     public Exception? LastCycleFault { get; private set; }
 
     /// <summary>
-    /// Raised on the thread that runs the cycle. The pump thread runs every
-    /// cycle after the first, and it is not the UI thread. A subscriber that
-    /// changes the user interface must move to the UI thread first.
+    /// The service raises this event on the thread that runs the cycle. After
+    /// the first cycle, the pump thread runs each cycle. The pump thread is not
+    /// the UI thread. A subscriber that changes the user interface must first
+    /// move to the UI thread.
     /// </summary>
     public event Action<IReadOnlyList<Peer>>? PeersChanged;
 
     /// <summary>
-    /// Starts the transport, runs one cycle, and starts the refresh loop. Call
-    /// it once. A second call throws InvalidOperationException. If this method
-    /// throws, the service is not usable: dispose this instance and construct
-    /// a new one. The service cannot retry a failed start, because the
-    /// transport also refuses a second start.
+    /// StartAsync starts the transport. It runs one cycle. Then it starts the
+    /// refresh loop. Call this method once. A second call throws
+    /// InvalidOperationException.
     /// </summary>
+    /// <remarks>
+    /// If this method throws, the service is not usable. Dispose this instance.
+    /// Then construct a new one. The service cannot retry a failed start. The
+    /// transport also refuses a second start.
+    /// </remarks>
     public async Task StartAsync(CancellationToken ct)
     {
         if (_started)
@@ -120,10 +124,10 @@ public sealed class LobbyService : IAsyncDisposable
         _transport.DatagramReceived += OnDatagram;
         await _transport.StartAsync(Port, ct);
 
-        // This first cycle is outside the pump's catch on purpose. A failed
-        // start must be visible, so that the window can tell the player the
-        // lobby could not start. A failed cycle later is ignored, because a
-        // list that is stale is better than a refresh that has stopped.
+        // This first cycle is outside the catch of the pump on purpose. If the
+        // start fails, the caller must see the exception. Then the window can
+        // tell the player that the lobby did not start. Later, the pump ignores
+        // a failed cycle. A stale list is better than a refresh that stops.
         await RunCycleAsync(ct);
 
         _loop = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -149,10 +153,10 @@ public sealed class LobbyService : IAsyncDisposable
             }
             catch (Exception)
             {
-                // A subscriber must not throw. If one does, the service
-                // ignores the error, because one bad handler must not stop
-                // the names from being saved for the whole session.
-                // Mm2Lobby.Core has no logging, so the error is lost.
+                // A subscriber must not throw. This catch ignores an exception
+                // from a subscriber, so one faulty subscriber cannot stop the
+                // service. Mm2Lobby.Core has no logger. This catch discards the
+                // exception.
             }
 
             RememberNames();
@@ -175,8 +179,8 @@ public sealed class LobbyService : IAsyncDisposable
 
         var hostingSince = Volatile.Read(ref _hostingSince);
 
-        // PeerTable rejects a name that is too long, and this app runs the same
-        // check as every peer. A long name must not make this app invisible.
+        // PeerTable rejects a name that is too long. Every peer runs that
+        // check, so a long name here stops every peer from showing this app.
         var player = _config.DisplayName.Length > PeerTable.MaxPlayerNameLength
             ? _config.DisplayName[..PeerTable.MaxPlayerNameLength]
             : _config.DisplayName;
@@ -208,9 +212,10 @@ public sealed class LobbyService : IAsyncDisposable
 
     private void RememberNames()
     {
-        // Without a status, the node ID of this machine is the empty string, so
-        // this machine is one row of Peers. The app must not write its own node
-        // ID to the file, because the file keeps that row for ever.
+        // Without a status, the node ID of this machine is the empty string.
+        // Then this machine is one row of Peers. The app must not write its own
+        // node ID to the file. The file would keep that row, and the lobby
+        // would show this machine as a peer.
         if (_status is null) return;
 
         foreach (var peer in Peers.Where(peer => peer.AppRunning))
@@ -261,12 +266,12 @@ public sealed class LobbyService : IAsyncDisposable
             {
                 LastCycleFault = e;
 
-                // A failed cycle must not end the loop. Any error in a cycle,
-                // such as a locked config file or a failed send, is ignored,
-                // and the next tick tries again. Mm2Lobby.Core has no
-                // logging, so the error is lost. A fault that persists
-                // leaves the peer list stale, which a player can see, where a
-                // stopped loop would show nothing.
+                // This catch ignores any exception in a cycle, for example a
+                // locked configuration file or a failed send. The next tick
+                // tries again. Mm2Lobby.Core has no logger, so this catch puts
+                // the exception in LastCycleFault. An exception that repeats
+                // leaves the peer list stale, and a player can see the stale
+                // list. A stopped loop would show nothing.
             }
         }
     }
@@ -287,8 +292,8 @@ public sealed class LobbyService : IAsyncDisposable
             }
             catch (OperationCanceledException)
             {
-                // This catch is a defence. The pump handles its own errors,
-                // so it is not expected to fault.
+                // This catch is a defence. The pump catches its own
+                // exceptions, so the pump task does not fault.
             }
         }
 

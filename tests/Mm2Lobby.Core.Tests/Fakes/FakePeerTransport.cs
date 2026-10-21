@@ -28,9 +28,9 @@ public sealed class FakePeerTransport : IPeerTransport
 
     public Task SendAsync(byte[] payload, IPAddress destination, int port, CancellationToken ct)
     {
-        // UdpPeerTransport refuses a send before the start, so this fake must
-        // refuse it too. A test that sends first exercises an order that fails
-        // in the real application.
+        // UdpPeerTransport refuses a send before the start. This fake must
+        // refuse that send too. A test that sends first uses an order that
+        // fails in the real application.
         if (StartedPort is null)
         {
             throw new InvalidOperationException("The transport has not started.");
@@ -40,7 +40,10 @@ public sealed class FakePeerTransport : IPeerTransport
         return Task.CompletedTask;
     }
 
-    /// <summary>Simulates an arriving datagram.</summary>
+    /// <summary>
+    /// This method gives a datagram to the subscriber, as the real transport
+    /// does.
+    /// </summary>
     public void Deliver(byte[] payload, IPAddress source)
         => DatagramReceived?.Invoke(payload, source);
 

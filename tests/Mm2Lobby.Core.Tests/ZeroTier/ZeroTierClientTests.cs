@@ -145,8 +145,8 @@ public class ZeroTierClientTests
     }
 
     // A zerotier-cli of a later version can print valid JSON of another shape.
-    // Each reader asks for one root kind, and a document of another kind gives
-    // the empty answer.
+    // Each reader asks for one root kind. A document of another kind gives the
+    // empty answer.
     [Fact]
     public async Task GetStatusAsync_returns_null_when_the_output_is_an_array()
     {
@@ -183,8 +183,8 @@ public class ZeroTierClientTests
 
         var quality = await Build(runner).GetLinkQualityAsync(default);
 
-        // Every empty answer shares one instance, so a caller that casts the
-        // map must not be able to add an entry to it.
+        // Every empty answer shares one instance. So a caller that casts the
+        // map must not be able to add an entry.
         Assert.Throws<NotSupportedException>(
             () => ((IDictionary<string, LinkQuality>)quality).Add("bb11223344", LinkQuality.Direct));
     }

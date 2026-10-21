@@ -3,8 +3,9 @@ using System.Text.Json;
 namespace Mm2Lobby.Core.Configuration;
 
 /// <summary>
-/// Reads and writes the one configuration file. A missing or malformed file
-/// loads the defaults, because a broken file must not stop a race.
+/// This class reads and writes the one configuration file. If the file is
+/// missing or malformed, Load returns the default configuration. A malformed
+/// file must not stop the app.
 /// </summary>
 public sealed class ConfigStore
 {
@@ -37,12 +38,12 @@ public sealed class ConfigStore
                 config.DisplayName = Environment.MachineName;
             }
 
-            // A file that holds "gamePath":null parses to a null here, and
-            // neither property accepts a null.
+            // A file can hold "gamePath":null. That value parses to a null
+            // here. Neither property accepts a null.
             config.GamePath ??= string.Empty;
             config.ZeroTierNetworkId ??= string.Empty;
 
-            config.RememberedNames = Rewrap(config.RememberedNames);
+            config.RememberedNames = CopyValidEntries(config.RememberedNames);
 
             return config;
         }
@@ -57,9 +58,9 @@ public sealed class ConfigStore
         var folder = Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
 
-        // The app writes a temporary file and then moves it. File.WriteAllText
-        // truncates the target first, and a crash in that moment loses every
-        // value in the file.
+        // The app writes a temporary file. Then the app moves that file onto
+        // the target. File.WriteAllText truncates the target first, and a crash
+        // in that moment loses every value in the file.
         var temporary = _path + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(config, Json));
         File.Move(temporary, _path, overwrite: true);
@@ -67,7 +68,14 @@ public sealed class ConfigStore
 
     private static AppConfig Defaults() => new() { DisplayName = Environment.MachineName };
 
-    private static Dictionary<string, string> Rewrap(Dictionary<string, string>? source)
+    /// <summary>
+    /// This method copies the entries into a map with the comparer
+    /// StringComparer.OrdinalIgnoreCase. It drops an entry whose node ID or
+    /// name is blank. A hand-edited file can hold such an entry, and
+    /// PeerDirectory would show it as a peer that never leaves.
+    /// </summary>
+    private static Dictionary<string, string> CopyValidEntries(
+        Dictionary<string, string>? source)
     {
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (source is null) return map;

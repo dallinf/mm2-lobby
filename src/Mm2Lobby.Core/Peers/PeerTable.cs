@@ -3,9 +3,10 @@ using System.Net;
 namespace Mm2Lobby.Core.Peers;
 
 /// <summary>
-/// Holds the peers heard recently and rejects everything else. The socket binds
-/// to 0.0.0.0 to receive the directed broadcast, so the player's home network
-/// can also reach the port. The subnet test is the authorisation boundary.
+/// This class holds the peers that sent an announcement recently. It rejects
+/// every other datagram. The socket listens on 0.0.0.0 to receive the directed
+/// broadcast. The home network of the player can also send data to the port.
+/// The subnet check decides whether the app trusts a sender.
 /// </summary>
 public sealed class PeerTable
 {
@@ -23,9 +24,9 @@ public sealed class PeerTable
     }
 
     /// <summary>
-    /// Validates one datagram and records it. Returns false when the datagram
-    /// fails any rule, which the caller may ignore: a rejected datagram is a
-    /// normal event, not an error.
+    /// This method checks one datagram and stores the peer. It returns false
+    /// when the datagram breaks a rule. The caller can ignore this result. A
+    /// rejected datagram is a normal event. It is not an exception.
     /// </summary>
     public bool Accept(ReadOnlySpan<byte> datagram, IPAddress source, IPNetwork allowed)
     {
@@ -46,8 +47,8 @@ public sealed class PeerTable
             source,
             message.Hosting,
             message.StartedAt,
-            // A datagram that holds "appVersion":null parses to a null here,
-            // and LivePeer.AppVersion does not accept a null.
+            // A datagram can hold "appVersion":null. That value parses to a
+            // null here. LivePeer.AppVersion does not accept a null.
             message.AppVersion ?? string.Empty,
             _clock());
 

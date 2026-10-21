@@ -17,8 +17,8 @@ public class LobbyServiceTests : IDisposable
     private readonly FakePeerTransport _transport = new();
     private DateTimeOffset _now = new(2026, 10, 21, 18, 0, 0, TimeSpan.Zero);
 
-    // The configuration that Build hands to the service. The caller and the
-    // service share this one object, so a test can change it after the build.
+    // Build gives this configuration to the service. The test and the service
+    // share this one object, so a test can change the object after the build.
     private AppConfig _config = new();
 
     private ConfigStore Store => new(Path.Combine(_folder, "config.json"));
@@ -104,9 +104,9 @@ public class LobbyServiceTests : IDisposable
     private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// Builds the service. The service and the PeerDirectory take a client
-    /// each, so a test that scripts one of them cannot lose the other half of
-    /// its setup without a report.
+    /// This method builds the service. The service and the PeerDirectory take
+    /// a client each. Then a test that scripts one client cannot lose the other
+    /// half of its setup.
     /// </summary>
     private LobbyService Build(
         IZeroTierClient? zeroTier = null,
@@ -180,8 +180,8 @@ public class LobbyServiceTests : IDisposable
     public async Task StartHosting_announces_the_start_time_of_a_clock_that_is_not_UTC()
     {
         // The service holds the start time as a number of ticks. The window
-        // gives it a local clock, so the service must hold the ticks of the
-        // UTC time, and not the ticks of the local time.
+        // gives the service a local clock. So the service must hold the ticks
+        // of the UTC time, and not the ticks of the local time.
         _now = new DateTimeOffset(2026, 10, 21, 12, 0, 0, TimeSpan.FromHours(-6));
         await using var service = Build();
         await service.StartAsync(default);
@@ -289,8 +289,8 @@ public class LobbyServiceTests : IDisposable
         await using var service = Build();
         await service.StartAsync(default);
 
-        // The test delivers one datagram from inside the subnet as well, so the
-        // result also proves that a delivered datagram does arrive.
+        // The test also delivers one datagram from inside the subnet. So the
+        // result proves that a delivered datagram does arrive.
         _transport.Deliver(
             new Announcement
             {
@@ -398,7 +398,7 @@ public class LobbyServiceTests : IDisposable
         service.PeersChanged += peers => seen = peers;
 
         // A folder at the path of the file makes the save fail on every
-        // platform, and it fails for a user with every right.
+        // platform. The save also fails for a user with every right.
         var configPath = Path.Combine(_folder, "config.json");
         File.Delete(configPath);
         Directory.CreateDirectory(configPath);
@@ -427,9 +427,9 @@ public class LobbyServiceTests : IDisposable
         var client = new BlockingZeroTierClient();
         await using var service = Build(client);
 
-        // StartAsync starts the transport and then runs the first cycle. That
-        // cycle waits inside the client, so this test cannot await StartAsync
-        // until it opens the client.
+        // StartAsync starts the transport. It then runs the first cycle. That
+        // cycle waits inside the client. So this test awaits StartAsync only
+        // after it opens the client.
         var first = service.StartAsync(default);
         var second = service.RunCycleAsync(default);
 
@@ -529,9 +529,9 @@ public class LobbyServiceTests : IDisposable
         await client.WhenCalled(2).WaitAsync(WaitLimit);
         time.Advance(LobbyService.CyclePeriod);
 
-        // Cycle 3 starts only after the pump handles the exception from cycle
-        // 2, and cycle 3 fails as well. So the property holds an exception at
-        // this point, whatever the order of the two tasks.
+        // Cycle 3 starts only after the pump catches the exception from cycle
+        // 2. Cycle 3 fails as well. So the property holds an exception at this
+        // point, whatever the order of the two tasks.
         await client.WhenCalled(3).WaitAsync(WaitLimit);
 
         var fault = Assert.IsType<IOException>(service.LastCycleFault);
@@ -570,8 +570,8 @@ public class LobbyServiceTests : IDisposable
         service.StartHosting();
         await service.RunCycleAsync(default);
 
-        // A directed broadcast reaches this app as well, so the app hears its
-        // own announcement.
+        // A directed broadcast reaches this app as well. So the app receives
+        // its own announcement.
         _transport.Deliver(_transport.Sent[^1].Payload, IPAddress.Parse("10.147.17.42"));
 
         await service.RunCycleAsync(default);

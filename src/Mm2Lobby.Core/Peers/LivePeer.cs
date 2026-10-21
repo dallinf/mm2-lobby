@@ -2,7 +2,10 @@ using System.Net;
 
 namespace Mm2Lobby.Core.Peers;
 
-/// <summary>One peer the app has heard from, and when it last heard.</summary>
+/// <summary>
+/// One peer that sent an announcement to the app. The record includes the time
+/// of the last announcement.
+/// </summary>
 public sealed record LivePeer(
     string NodeId,
     string Player,

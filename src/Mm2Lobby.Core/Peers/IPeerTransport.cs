@@ -5,12 +5,16 @@ namespace Mm2Lobby.Core.Peers;
 public interface IPeerTransport : IAsyncDisposable
 {
     /// <summary>
-    /// Raised on the receive thread, once per datagram. A subscriber must not
-    /// throw. The transport ignores an exception from a subscriber, so that
-    /// one bad handler cannot stop discovery for the whole session. The
-    /// transport supports one subscriber. If there is more than one, a throw
-    /// in the first makes the later subscribers miss that datagram.
+    /// The transport raises this event in the receive loop, once for each
+    /// datagram. A subscriber must not throw. The transport ignores an
+    /// exception from a subscriber, so one faulty subscriber cannot stop
+    /// discovery.
     /// </summary>
+    /// <remarks>
+    /// The transport supports one subscriber. If the code attaches a second
+    /// subscriber, and the first subscriber throws, the second subscriber loses
+    /// that datagram.
+    /// </remarks>
     event Action<byte[], IPAddress>? DatagramReceived;
 
     Task StartAsync(int port, CancellationToken ct);

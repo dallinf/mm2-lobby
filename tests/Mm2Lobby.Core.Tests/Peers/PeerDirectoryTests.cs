@@ -175,7 +175,7 @@ public class PeerDirectoryTests
     {
         Hear("bb11223344", "chris", "10.147.17.9");
 
-        // A datagram can hold "appVersion":null, and Peer.AppVersion does not
+        // A datagram can hold "appVersion":null. Peer.AppVersion does not
         // accept a null.
         Assert.True(_table.Accept(
             System.Text.Encoding.UTF8.GetBytes("""

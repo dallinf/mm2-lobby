@@ -7,14 +7,14 @@ using Mm2Lobby.Core.Processes;
 namespace Mm2Lobby.Core.ZeroTier;
 
 /// <summary>
-/// Reads the local ZeroTier state. Every method answers null or an empty
-/// result rather than throwing, because a missing or upgraded zerotier-cli is
-/// an expected condition.
+/// This class reads the local ZeroTier state. Every method returns null or an
+/// empty result, and no method throws. A zerotier-cli that is absent, or that
+/// prints a new format, is an expected condition.
 /// </summary>
 public sealed class ZeroTierClient : IZeroTierClient
 {
-    // A caller that casts this map back to Dictionary must not be able to
-    // change it, because every empty answer shares this one instance.
+    // Every empty answer shares this one instance. So a caller that casts the
+    // map to Dictionary must not be able to change it.
     private static readonly IReadOnlyDictionary<string, LinkQuality> NoPeers =
         new ReadOnlyDictionary<string, LinkQuality>(
             new Dictionary<string, LinkQuality>(StringComparer.OrdinalIgnoreCase));
@@ -89,11 +89,11 @@ public sealed class ZeroTierClient : IZeroTierClient
     }
 
     /// <summary>
-    /// Runs one zerotier-cli command and parses the output. This method
-    /// returns null when the command fails, when the output is not JSON, or
-    /// when the root element is not of the expected kind. This method owns the
-    /// document until it returns one, so the caller disposes only a document
-    /// that it receives.
+    /// This method runs one zerotier-cli command. It then parses the output.
+    /// It returns null when the command fails, when the output is not JSON, or
+    /// when the root element is not of the expected kind. This method disposes
+    /// a document that it does not return. So the caller disposes only a
+    /// document that it receives.
     /// </summary>
     private async Task<JsonDocument?> ReadJsonAsync(
         string arguments, JsonValueKind expectedKind, CancellationToken ct)

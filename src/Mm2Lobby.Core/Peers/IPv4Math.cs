@@ -5,9 +5,9 @@ using System.Net.Sockets;
 namespace Mm2Lobby.Core.Peers;
 
 /// <summary>
-/// The IPv4 arithmetic that peer discovery needs. ZeroTier reports an address
-/// and a prefix length; discovery needs the subnet, to decide which senders to
-/// trust, and the broadcast address, to reach every member.
+/// This class does the IPv4 arithmetic for peer discovery. ZeroTier reports an
+/// address and a prefix length. The app uses the subnet to decide which senders
+/// it trusts. The app uses the broadcast address to reach every peer.
 /// </summary>
 public static class IPv4Math
 {

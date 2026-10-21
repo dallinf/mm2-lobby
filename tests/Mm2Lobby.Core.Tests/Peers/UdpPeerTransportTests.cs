@@ -6,8 +6,9 @@ namespace Mm2Lobby.Core.Tests.Peers;
 
 public class UdpPeerTransportTests
 {
-    // Broadcast needs a real ZeroTier network, so it belongs to the manual
-    // test. These tests prove the send and receive path over loopback.
+    // A test of the broadcast needs a real ZeroTier network. The manual test
+    // covers it. These tests prove the send path and the receive path over
+    // loopback.
 
     [Fact]
     public async Task A_datagram_sent_to_a_port_reaches_the_transport_bound_to_it()
@@ -56,7 +57,7 @@ public class UdpPeerTransportTests
 
         await using var second = new UdpPeerTransport();
 
-        // The transport does not set ReuseAddress, so a second copy of the app
+        // The transport does not set ReuseAddress. So a second copy of the app
         // fails here, and task 9 can report that MM2 Lobby already runs.
         await Assert.ThrowsAsync<System.Net.Sockets.SocketException>(
             () => second.StartAsync(port, default));

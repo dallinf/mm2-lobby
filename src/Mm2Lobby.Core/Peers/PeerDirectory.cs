@@ -3,8 +3,9 @@ using Mm2Lobby.Core.ZeroTier;
 namespace Mm2Lobby.Core.Peers;
 
 /// <summary>
-/// Merges the peers heard over UDP with the nodes ZeroTier reports and the
-/// names the app remembers, and sorts the result for display.
+/// This class merges the peers that sent an announcement with the nodes
+/// ZeroTier reports and the names the app remembers. It then sorts the peers
+/// for the display.
 /// </summary>
 public sealed class PeerDirectory
 {

@@ -4,9 +4,9 @@ using System.Net.Sockets;
 namespace Mm2Lobby.Core.Peers;
 
 /// <summary>
-/// Sends and receives announcements over UDP. It binds to 0.0.0.0 so that a
-/// directed broadcast such as 10.147.17.255 arrives. PeerTable decides which
-/// senders to trust.
+/// This class sends and receives announcements over UDP. It binds the socket to
+/// 0.0.0.0. A directed broadcast, for example 10.147.17.255, therefore arrives.
+/// PeerTable decides which senders the app trusts.
 /// </summary>
 public sealed class UdpPeerTransport : IPeerTransport
 {
@@ -30,9 +30,10 @@ public sealed class UdpPeerTransport : IPeerTransport
         try
         {
             // The app does not set ReuseAddress. The bind to 0.0.0.0 does not
-            // need it, and it lets a second copy of the app take the same port
-            // without a report. Without it, the second copy fails at the bind,
-            // and the window can tell the player that MM2 Lobby already runs.
+            // need that option. The option also lets a second copy of the app
+            // take the same port, and the app reports nothing. Without the
+            // option, the bind in the second copy fails. Then the window can
+            // tell the player that MM2 Lobby already runs.
             client.Client.Bind(new IPEndPoint(IPAddress.Any, port));
             client.EnableBroadcast = true;
         }
@@ -52,8 +53,8 @@ public sealed class UdpPeerTransport : IPeerTransport
     public async Task SendAsync(
         byte[] payload, IPAddress destination, int port, CancellationToken ct)
     {
-        // DisposeAsync clears _client, so this method must report the two
-        // states apart.
+        // DisposeAsync sets _client to null. Without this check, a send after
+        // the disposal reports that the transport did not start.
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         var client = _client
@@ -76,10 +77,10 @@ public sealed class UdpPeerTransport : IPeerTransport
                 }
                 catch (Exception)
                 {
-                    // A subscriber must not throw. If one does, the transport
-                    // ignores the error, because one bad handler must not stop
-                    // discovery for the whole session. Mm2Lobby.Core has no
-                    // logging, so the error is lost.
+                    // A subscriber must not throw. This catch ignores an
+                    // exception from a subscriber, so one faulty subscriber
+                    // cannot stop discovery. Mm2Lobby.Core has no logger. This
+                    // catch discards the exception.
                 }
             }
             catch (OperationCanceledException)
@@ -92,11 +93,12 @@ public sealed class UdpPeerTransport : IPeerTransport
             }
             catch (SocketException)
             {
-                // One bad datagram must not end the loop. The pause stops a
-                // persistent error, such as WSAECONNRESET on Windows, from
-                // spinning the loop. Waiting on the loop token keeps shutdown
-                // immediate. A throw inside a catch block does not reach the
-                // sibling catch blocks, so this wait handles its own cancel.
+                // One bad datagram must not end the loop. The pause stops an
+                // exception that repeats, for example WSAECONNRESET on Windows,
+                // from making the loop run without a break. The pause uses the
+                // loop token, so the shutdown is immediate. An exception inside
+                // a catch block does not reach the other catch blocks of the
+                // same try. So this pause catches its own cancellation.
                 try
                 {
                     await Task.Delay(SocketErrorPause, ct);
@@ -123,7 +125,7 @@ public sealed class UdpPeerTransport : IPeerTransport
             }
             catch (OperationCanceledException)
             {
-                // Expected on shutdown.
+                // The receive task ends with this exception on shutdown.
             }
         }
 
