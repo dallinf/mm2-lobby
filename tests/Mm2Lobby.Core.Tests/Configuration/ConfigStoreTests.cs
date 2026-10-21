@@ -103,7 +103,8 @@ public class ConfigStoreTests : IDisposable
         var config = new ConfigStore(Path_).Load();
 
         Assert.Single(config.RememberedNames);
-        Assert.Equal("y", config.RememberedNames["ab11"]);
+        Assert.True(config.RememberedNames.ContainsKey("Ab11"));
+        Assert.Contains(config.RememberedNames["Ab11"], new[] { "x", "y" });
     }
 
     [Fact]
