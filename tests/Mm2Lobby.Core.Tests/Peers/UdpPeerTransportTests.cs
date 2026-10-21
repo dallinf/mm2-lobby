@@ -56,6 +56,43 @@ public class UdpPeerTransportTests
             () => transport.StartAsync(FreePort(), default));
     }
 
+    [Fact]
+    public async Task A_subscriber_that_throws_does_not_stop_the_receive_loop()
+    {
+        var receiverPort = FreePort();
+
+        await using var receiver = new UdpPeerTransport();
+        await using var sender = new UdpPeerTransport();
+
+        var threw = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        receiver.DatagramReceived += (payload, _) =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                threw.TrySetResult();
+                throw new InvalidOperationException("The subscriber failed.");
+            }
+
+            second.TrySetResult(Encoding.UTF8.GetString(payload));
+        };
+
+        await receiver.StartAsync(receiverPort, default);
+        await sender.StartAsync(FreePort(), default);
+
+        await sender.SendAsync(
+            Encoding.UTF8.GetBytes("first"), IPAddress.Loopback, receiverPort, default);
+        Assert.Same(threw.Task, await Task.WhenAny(threw.Task, Task.Delay(5000)));
+
+        await sender.SendAsync(
+            Encoding.UTF8.GetBytes("second"), IPAddress.Loopback, receiverPort, default);
+        Assert.Same(second.Task, await Task.WhenAny(second.Task, Task.Delay(5000)));
+
+        Assert.Equal("second", await second.Task);
+    }
+
     private static int FreePort()
     {
         using var probe = new System.Net.Sockets.Socket(

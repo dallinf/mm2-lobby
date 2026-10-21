@@ -10,6 +10,8 @@ namespace Mm2Lobby.Core.Peers;
 /// </summary>
 public sealed class UdpPeerTransport : IPeerTransport
 {
+    private static readonly TimeSpan SocketErrorPause = TimeSpan.FromMilliseconds(50);
+
     private UdpClient? _client;
     private CancellationTokenSource? _loop;
     private Task? _receive;
@@ -51,7 +53,18 @@ public sealed class UdpPeerTransport : IPeerTransport
             try
             {
                 var received = await client.ReceiveAsync(ct);
-                DatagramReceived?.Invoke(received.Buffer, received.RemoteEndPoint.Address);
+
+                try
+                {
+                    DatagramReceived?.Invoke(received.Buffer, received.RemoteEndPoint.Address);
+                }
+                catch (Exception)
+                {
+                    // A subscriber must not throw. If one does, the transport
+                    // ignores the error, because one bad handler must not stop
+                    // discovery for the whole session. Mm2Lobby.Core has no
+                    // logging, so the error is lost.
+                }
             }
             catch (OperationCanceledException)
             {
@@ -63,7 +76,19 @@ public sealed class UdpPeerTransport : IPeerTransport
             }
             catch (SocketException)
             {
-                // One bad datagram must not end the loop.
+                // One bad datagram must not end the loop. The pause stops a
+                // persistent error, such as WSAECONNRESET on Windows, from
+                // spinning the loop. Waiting on the loop token keeps shutdown
+                // immediate. A throw inside a catch block does not reach the
+                // sibling catch blocks, so this wait handles its own cancel.
+                try
+                {
+                    await Task.Delay(SocketErrorPause, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
     }
