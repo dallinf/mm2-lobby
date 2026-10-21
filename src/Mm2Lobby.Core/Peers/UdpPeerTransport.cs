@@ -26,10 +26,19 @@ public sealed class UdpPeerTransport : IPeerTransport
         }
 
         var client = new UdpClient(AddressFamily.InterNetwork);
-        client.Client.SetSocketOption(
-            SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-        client.Client.Bind(new IPEndPoint(IPAddress.Any, port));
-        client.EnableBroadcast = true;
+        try
+        {
+            client.Client.SetSocketOption(
+                SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            client.Client.Bind(new IPEndPoint(IPAddress.Any, port));
+            client.EnableBroadcast = true;
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
+
         _client = client;
 
         _loop = CancellationTokenSource.CreateLinkedTokenSource(ct);

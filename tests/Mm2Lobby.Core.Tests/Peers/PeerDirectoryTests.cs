@@ -115,6 +115,34 @@ public class PeerDirectoryTests
     }
 
     [Fact]
+    public async Task This_machine_is_excluded_when_the_node_id_differs_only_in_case()
+    {
+        Hear(MyNodeId, "dallin", "10.147.17.42");
+        _zeroTier.Quality[MyNodeId] = LinkQuality.Direct;
+        var remembered = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [MyNodeId] = "dallin",
+        };
+
+        var peers = await Build().GetPeersAsync(
+            MyNodeId.ToUpperInvariant(), remembered, default);
+
+        Assert.Empty(peers);
+    }
+
+    [Fact]
+    public async Task A_hosting_peer_carries_its_hosting_flag_and_start_time()
+    {
+        Hear("ee11112222", "zoe", "10.147.17.11", hosting: true);
+
+        var peers = await Build().GetPeersAsync(MyNodeId, NoNames, default);
+
+        var peer = Assert.Single(peers);
+        Assert.True(peer.Hosting);
+        Assert.Equal(_now, peer.StartedAt);
+    }
+
+    [Fact]
     public async Task A_heard_peer_without_a_link_quality_reports_unknown()
     {
         Hear("bb11223344", "chris", "10.147.17.9");
@@ -132,13 +160,13 @@ public class PeerDirectoryTests
         _zeroTier.Quality["cc55667788"] = LinkQuality.Relayed;
         var remembered = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["cc55667788"] = "sam",
+            ["cc55667788"] = "abe",
             ["dd99887766"] = "jo",
         };
 
         var peers = await Build().GetPeersAsync(MyNodeId, remembered, default);
 
-        Assert.Equal(new[] { "zoe", "chris", "sam", "jo" },
+        Assert.Equal(new[] { "zoe", "chris", "abe", "jo" },
             peers.Select(p => p.DisplayName).ToArray());
     }
 
