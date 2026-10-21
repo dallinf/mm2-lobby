@@ -66,6 +66,13 @@ public sealed class LobbyService : IAsyncDisposable
 
     public event Action<IReadOnlyList<Peer>>? PeersChanged;
 
+    /// <summary>
+    /// Starts the transport, runs one cycle, and starts the refresh loop. Call
+    /// it once. A second call throws InvalidOperationException. If this method
+    /// throws, the service is not usable: dispose this instance and construct
+    /// a new one. The service cannot retry a failed start, because the
+    /// transport also refuses a second start.
+    /// </summary>
     public async Task StartAsync(CancellationToken ct)
     {
         if (_started)
@@ -78,6 +85,10 @@ public sealed class LobbyService : IAsyncDisposable
         _transport.DatagramReceived += OnDatagram;
         await _transport.StartAsync(Port, ct);
 
+        // This first cycle is outside the pump's catch on purpose. A failed
+        // start must be visible, so that the window can tell the player the
+        // lobby could not start. A failed cycle later is ignored, because a
+        // list that is stale is better than a refresh that has stopped.
         await RunCycleAsync(ct);
 
         _loop = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -159,7 +170,7 @@ public sealed class LobbyService : IAsyncDisposable
                 await timer.WaitForNextTickAsync(ct);
                 await RunCycleAsync(ct);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 return;
             }
