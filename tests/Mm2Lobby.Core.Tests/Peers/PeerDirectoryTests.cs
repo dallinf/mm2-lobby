@@ -160,13 +160,13 @@ public class PeerDirectoryTests
         _zeroTier.Quality["cc55667788"] = LinkQuality.Relayed;
         var remembered = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["cc55667788"] = "abe",
-            ["dd99887766"] = "jo",
+            ["cc55667788"] = "bea",
+            ["dd99887766"] = "ann",
         };
 
         var peers = await Build().GetPeersAsync(MyNodeId, remembered, default);
 
-        Assert.Equal(new[] { "zoe", "chris", "abe", "jo" },
+        Assert.Equal(new[] { "zoe", "chris", "bea", "ann" },
             peers.Select(p => p.DisplayName).ToArray());
     }
 
