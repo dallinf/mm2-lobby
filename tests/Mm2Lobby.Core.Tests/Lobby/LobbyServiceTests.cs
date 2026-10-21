@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Time.Testing;
 using Mm2Lobby.Core.Configuration;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
@@ -47,7 +48,59 @@ public class LobbyServiceTests : IDisposable
             => _inner.GetLinkQualityAsync(ct);
     }
 
-    private LobbyService Build(IZeroTierClient? zeroTier = null)
+    private sealed class ScriptedZeroTierClient : IZeroTierClient
+    {
+        private readonly FakeZeroTierClient _inner = new();
+        private readonly object _gate = new();
+        private readonly List<(int Count, TaskCompletionSource Reached)> _waiters = new();
+
+        public Func<int, Exception?> FailOn { get; set; } = _ => null;
+
+        public int StatusCalls { get; private set; }
+
+        public Task WhenCalled(int count)
+        {
+            lock (_gate)
+            {
+                if (StatusCalls >= count) return Task.CompletedTask;
+
+                var reached = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                _waiters.Add((count, reached));
+                return reached.Task;
+            }
+        }
+
+        public Task<ZeroTierStatus?> GetStatusAsync(CancellationToken ct)
+        {
+            int call;
+            lock (_gate)
+            {
+                call = ++StatusCalls;
+                foreach (var waiter in _waiters.Where(w => w.Count <= call))
+                {
+                    waiter.Reached.TrySetResult();
+                }
+            }
+
+            var failure = FailOn(call);
+            if (failure is not null) throw failure;
+
+            return _inner.GetStatusAsync(ct);
+        }
+
+        public Task<ZeroTierNetwork?> GetNetworkAsync(string networkId, CancellationToken ct)
+            => _inner.GetNetworkAsync(networkId, ct);
+
+        public Task<IReadOnlyDictionary<string, LinkQuality>> GetLinkQualityAsync(
+            CancellationToken ct)
+            => _inner.GetLinkQualityAsync(ct);
+    }
+
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(5);
+
+    private LobbyService Build(
+        IZeroTierClient? zeroTier = null, TimeProvider? timeProvider = null)
     {
         zeroTier ??= _zeroTier;
         var store = Store;
@@ -60,7 +113,7 @@ public class LobbyServiceTests : IDisposable
         var table = new PeerTable(LobbyService.PeerExpiry, () => _now);
         return new LobbyService(
             zeroTier, _transport, table, new PeerDirectory(zeroTier, table),
-            store, "1.0.0", () => _now);
+            store, "1.0.0", () => _now, timeProvider);
     }
 
     private static Announcement Decode(byte[] payload)
@@ -343,5 +396,58 @@ public class LobbyServiceTests : IDisposable
         await service.RunCycleAsync(default);
 
         Assert.Equal("chris", Store.Load().RememberedNames["bb11223344"]);
+    }
+
+    [Fact]
+    public async Task The_pump_waits_for_the_first_tick_before_it_runs_another_cycle()
+    {
+        var client = new ScriptedZeroTierClient();
+        var time = new FakeTimeProvider();
+        await using var service = Build(client, time);
+
+        await service.StartAsync(default);
+
+        Assert.Equal(1, client.StatusCalls);
+
+        time.Advance(LobbyService.CyclePeriod);
+        await client.WhenCalled(2).WaitAsync(WaitLimit);
+
+        Assert.Equal(2, client.StatusCalls);
+    }
+
+    [Fact]
+    public async Task The_pump_runs_the_next_cycle_after_a_cycle_throws()
+    {
+        var client = new ScriptedZeroTierClient
+        {
+            FailOn = call => call == 2 ? new IOException("disk") : null,
+        };
+        var time = new FakeTimeProvider();
+        await using var service = Build(client, time);
+        await service.StartAsync(default);
+
+        time.Advance(LobbyService.CyclePeriod);
+        await client.WhenCalled(2).WaitAsync(WaitLimit);
+        time.Advance(LobbyService.CyclePeriod);
+
+        await client.WhenCalled(3).WaitAsync(WaitLimit);
+    }
+
+    [Fact]
+    public async Task The_pump_runs_the_next_cycle_after_a_cancel_it_did_not_ask_for()
+    {
+        var client = new ScriptedZeroTierClient
+        {
+            FailOn = call => call == 2 ? new OperationCanceledException("not ours") : null,
+        };
+        var time = new FakeTimeProvider();
+        await using var service = Build(client, time);
+        await service.StartAsync(default);
+
+        time.Advance(LobbyService.CyclePeriod);
+        await client.WhenCalled(2).WaitAsync(WaitLimit);
+        time.Advance(LobbyService.CyclePeriod);
+
+        await client.WhenCalled(3).WaitAsync(WaitLimit);
     }
 }

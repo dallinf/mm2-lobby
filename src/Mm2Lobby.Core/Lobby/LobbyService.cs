@@ -26,6 +26,7 @@ public sealed class LobbyService : IAsyncDisposable
     private readonly AppConfig _config;
     private readonly string _appVersion;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly TimeProvider _timeProvider;
 
     private ZeroTierStatus? _status;
     private ZeroTierNetwork? _network;
@@ -44,7 +45,8 @@ public sealed class LobbyService : IAsyncDisposable
         PeerDirectory directory,
         ConfigStore configStore,
         string appVersion,
-        Func<DateTimeOffset> clock)
+        Func<DateTimeOffset> clock,
+        TimeProvider? timeProvider = null)
     {
         _zeroTier = zeroTier;
         _transport = transport;
@@ -53,6 +55,7 @@ public sealed class LobbyService : IAsyncDisposable
         _configStore = configStore;
         _appVersion = appVersion;
         _clock = clock;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _config = configStore.Load();
     }
 
@@ -192,7 +195,7 @@ public sealed class LobbyService : IAsyncDisposable
 
     private async Task PumpAsync(CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(CyclePeriod);
+        using var timer = new PeriodicTimer(CyclePeriod, _timeProvider);
 
         while (!ct.IsCancellationRequested)
         {
