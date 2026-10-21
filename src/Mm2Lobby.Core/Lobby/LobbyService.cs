@@ -30,7 +30,12 @@ public sealed class LobbyService : IAsyncDisposable
 
     private ZeroTierStatus? _status;
     private ZeroTierNetwork? _network;
-    private DateTimeOffset? _hostingSince;
+
+    // The host start time, in UTC ticks. Zero means that this app does not
+    // host. A long holds the value in one word, so a reader cannot see one
+    // half of a new value and one half of the old value.
+    private long _hostingSince;
+
     private CancellationTokenSource? _loop;
     private Task? _pump;
     private readonly SemaphoreSlim _cycleGate = new(1, 1);
@@ -38,12 +43,20 @@ public sealed class LobbyService : IAsyncDisposable
     private bool _started;
     private bool _disposed;
 
+    /// <summary>
+    /// The caller owns the configuration. The process holds one AppConfig, and
+    /// the caller passes that one object here. The service reads the display
+    /// name from it on every cycle, and the service saves it. The service does
+    /// not load it, because a load here would discard a change that the caller
+    /// made, for example the game path.
+    /// </summary>
     public LobbyService(
         IZeroTierClient zeroTier,
         IPeerTransport transport,
         PeerTable table,
         PeerDirectory directory,
         ConfigStore configStore,
+        AppConfig config,
         string appVersion,
         Func<DateTimeOffset> clock,
         TimeProvider? timeProvider = null)
@@ -53,21 +66,33 @@ public sealed class LobbyService : IAsyncDisposable
         _table = table;
         _directory = directory;
         _configStore = configStore;
+        _config = config;
         _appVersion = appVersion;
         _clock = clock;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _config = configStore.Load();
     }
 
     public IReadOnlyList<Peer> Peers { get; private set; } = Array.Empty<Peer>();
 
-    public bool IsHosting => _hostingSince is not null;
+    public bool IsHosting => Volatile.Read(ref _hostingSince) != 0;
 
+    /// <summary>
+    /// The peer that hosts a game. This property never returns this machine,
+    /// because Peers never holds this machine. To show that this app hosts, the
+    /// window reads IsHosting and MyAddress.
+    /// </summary>
     public Peer? CurrentHost => Peers.FirstOrDefault(peer => peer.Hosting);
 
     public string? MyAddress => _network?.Address?.ToString();
 
     public string DisplayName => _config.DisplayName;
+
+    /// <summary>
+    /// The exception from the last cycle that the pump ran, or null when that
+    /// cycle completed. Mm2Lobby.Core has no logger, so this property is the
+    /// one record of a fault.
+    /// </summary>
+    public Exception? LastCycleFault { get; private set; }
 
     /// <summary>
     /// Raised on the thread that runs the cycle. The pump thread runs every
@@ -138,9 +163,9 @@ public sealed class LobbyService : IAsyncDisposable
         }
     }
 
-    public void StartHosting() => _hostingSince = _clock();
+    public void StartHosting() => Volatile.Write(ref _hostingSince, _clock().UtcTicks);
 
-    public void StopHosting() => _hostingSince = null;
+    public void StopHosting() => Volatile.Write(ref _hostingSince, 0);
 
     private async Task AnnounceAsync(CancellationToken ct)
     {
@@ -148,16 +173,24 @@ public sealed class LobbyService : IAsyncDisposable
         var network = _network;
         if (status is null || network?.Address is null) return;
 
-        var hostingSince = _hostingSince;
+        var hostingSince = Volatile.Read(ref _hostingSince);
+
+        // PeerTable rejects a name that is too long, and this app runs the same
+        // check as every peer. A long name must not make this app invisible.
+        var player = _config.DisplayName.Length > PeerTable.MaxPlayerNameLength
+            ? _config.DisplayName[..PeerTable.MaxPlayerNameLength]
+            : _config.DisplayName;
 
         var announcement = new Announcement
         {
             AppVersion = _appVersion,
             NodeId = status.NodeId,
-            Player = _config.DisplayName,
+            Player = player,
             Address = network.Address.ToString(),
-            Hosting = hostingSince is not null,
-            StartedAt = hostingSince,
+            Hosting = hostingSince != 0,
+            StartedAt = hostingSince == 0
+                ? null
+                : new DateTimeOffset(hostingSince, TimeSpan.Zero),
         };
 
         var destination = IPv4Math.BroadcastAddress(network.Address, network.PrefixLength);
@@ -175,6 +208,11 @@ public sealed class LobbyService : IAsyncDisposable
 
     private void RememberNames()
     {
+        // Without a status, the node ID of this machine is the empty string, so
+        // this machine is one row of Peers. The app must not write its own node
+        // ID to the file, because the file keeps that row for ever.
+        if (_status is null) return;
+
         foreach (var peer in Peers.Where(peer => peer.AppRunning))
         {
             if (_config.RememberedNames.TryGetValue(peer.NodeId, out var known)
@@ -189,8 +227,18 @@ public sealed class LobbyService : IAsyncDisposable
 
         if (!_namesNeedSave) return;
 
-        _configStore.Save(_config);
-        _namesNeedSave = false;
+        try
+        {
+            _configStore.Save(_config);
+            _namesNeedSave = false;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // A locked or read-only file must not stop the cycle. The first
+            // cycle runs inside StartAsync, and an exception there aborts the
+            // start of the lobby. The flag stays set, so the next cycle writes
+            // the file again.
+        }
     }
 
     private async Task PumpAsync(CancellationToken ct)
@@ -203,13 +251,16 @@ public sealed class LobbyService : IAsyncDisposable
             {
                 await timer.WaitForNextTickAsync(ct);
                 await RunCycleAsync(ct);
+                LastCycleFault = null;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 return;
             }
-            catch (Exception)
+            catch (Exception e)
             {
+                LastCycleFault = e;
+
                 // A failed cycle must not end the loop. Any error in a cycle,
                 // such as a locked config file or a failed send, is ignored,
                 // and the next tick tries again. Mm2Lobby.Core has no

@@ -17,6 +17,10 @@ public class LobbyServiceTests : IDisposable
     private readonly FakePeerTransport _transport = new();
     private DateTimeOffset _now = new(2026, 10, 21, 18, 0, 0, TimeSpan.Zero);
 
+    // The configuration that Build hands to the service. The caller and the
+    // service share this one object, so a test can change it after the build.
+    private AppConfig _config = new();
+
     private ConfigStore Store => new(Path.Combine(_folder, "config.json"));
 
     public void Dispose()
@@ -99,21 +103,30 @@ public class LobbyServiceTests : IDisposable
 
     private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Builds the service. The service and the PeerDirectory take a client
+    /// each, so a test that scripts one of them cannot lose the other half of
+    /// its setup without a report.
+    /// </summary>
     private LobbyService Build(
-        IZeroTierClient? zeroTier = null, TimeProvider? timeProvider = null)
+        IZeroTierClient? zeroTier = null,
+        IZeroTierClient? directoryZeroTier = null,
+        TimeProvider? timeProvider = null)
     {
         zeroTier ??= _zeroTier;
+        directoryZeroTier ??= _zeroTier;
         var store = Store;
         store.Save(new AppConfig
         {
             DisplayName = "dallin",
             ZeroTierNetworkId = "0123456789abcdef",
         });
+        _config = store.Load();
 
         var table = new PeerTable(LobbyService.PeerExpiry, () => _now);
         return new LobbyService(
-            zeroTier, _transport, table, new PeerDirectory(zeroTier, table),
-            store, "1.0.0", () => _now, timeProvider);
+            zeroTier, _transport, table, new PeerDirectory(directoryZeroTier, table),
+            store, _config, "1.0.0", () => _now, timeProvider);
     }
 
     private static Announcement Decode(byte[] payload)
@@ -127,10 +140,13 @@ public class LobbyServiceTests : IDisposable
     public async Task RunCycleAsync_broadcasts_this_app_to_the_subnet_broadcast_address()
     {
         await using var service = Build();
+        await service.StartAsync(default);
 
         await service.RunCycleAsync(default);
 
-        var sent = Assert.Single(_transport.Sent);
+        // StartAsync runs one cycle, and this test runs a second one.
+        Assert.Equal(2, _transport.Sent.Count);
+        var sent = _transport.Sent[^1];
         Assert.Equal(IPAddress.Parse("10.147.17.255"), sent.Destination);
         Assert.Equal(LobbyService.Port, sent.Port);
 
@@ -146,27 +162,55 @@ public class LobbyServiceTests : IDisposable
     public async Task StartHosting_puts_the_host_flag_and_the_start_time_on_the_announcement()
     {
         await using var service = Build();
+        await service.StartAsync(default);
         service.StartHosting();
 
         await service.RunCycleAsync(default);
 
-        var announcement = Decode(Assert.Single(_transport.Sent).Payload);
+        Assert.Equal(2, _transport.Sent.Count);
+        Assert.False(Decode(_transport.Sent[0].Payload).Hosting);
+
+        var announcement = Decode(_transport.Sent[^1].Payload);
         Assert.True(service.IsHosting);
         Assert.True(announcement.Hosting);
         Assert.Equal(_now, announcement.StartedAt);
     }
 
     [Fact]
+    public async Task StartHosting_announces_the_start_time_of_a_clock_that_is_not_UTC()
+    {
+        // The service holds the start time as a number of ticks. The window
+        // gives it a local clock, so the service must hold the ticks of the
+        // UTC time, and not the ticks of the local time.
+        _now = new DateTimeOffset(2026, 10, 21, 12, 0, 0, TimeSpan.FromHours(-6));
+        await using var service = Build();
+        await service.StartAsync(default);
+        service.StartHosting();
+
+        await service.RunCycleAsync(default);
+
+        var announcement = Decode(_transport.Sent[^1].Payload);
+        Assert.True(announcement.Hosting);
+        Assert.Equal(_now, announcement.StartedAt);
+        Assert.Equal(_now.UtcDateTime, announcement.StartedAt!.Value.UtcDateTime);
+    }
+
+    [Fact]
     public async Task StopHosting_clears_the_host_flag()
     {
         await using var service = Build();
+        await service.StartAsync(default);
         service.StartHosting();
         service.StopHosting();
 
         await service.RunCycleAsync(default);
 
+        Assert.Equal(2, _transport.Sent.Count);
         Assert.False(service.IsHosting);
-        Assert.False(Decode(Assert.Single(_transport.Sent).Payload).Hosting);
+
+        var announcement = Decode(_transport.Sent[^1].Payload);
+        Assert.False(announcement.Hosting);
+        Assert.Null(announcement.StartedAt);
     }
 
     [Fact]
@@ -245,16 +289,25 @@ public class LobbyServiceTests : IDisposable
         await using var service = Build();
         await service.StartAsync(default);
 
+        // The test delivers one datagram from inside the subnet as well, so the
+        // result also proves that a delivered datagram does arrive.
         _transport.Deliver(
             new Announcement
             {
-                NodeId = "bb11223344", Player = "chris", Address = "192.168.1.9",
+                NodeId = "bb11223344", Player = "chris", Address = "10.147.17.9",
+            }.ToBytes(),
+            IPAddress.Parse("10.147.17.9"));
+        _transport.Deliver(
+            new Announcement
+            {
+                NodeId = "cc55667788", Player = "sam", Address = "192.168.1.9",
             }.ToBytes(),
             IPAddress.Parse("192.168.1.9"));
 
         await service.RunCycleAsync(default);
 
-        Assert.Empty(service.Peers);
+        var peer = Assert.Single(service.Peers);
+        Assert.Equal("bb11223344", peer.NodeId);
     }
 
     [Fact]
@@ -289,6 +342,7 @@ public class LobbyServiceTests : IDisposable
     public async Task MyAddress_reports_this_machine_on_the_virtual_network()
     {
         await using var service = Build();
+        await service.StartAsync(default);
 
         await service.RunCycleAsync(default);
 
@@ -330,7 +384,7 @@ public class LobbyServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RunCycleAsync_raises_PeersChanged_when_the_name_save_fails_and_saves_on_the_next_cycle()
+    public async Task RunCycleAsync_absorbs_a_failed_name_save_and_saves_on_the_next_cycle()
     {
         await using var service = Build();
         await service.StartAsync(default);
@@ -342,20 +396,24 @@ public class LobbyServiceTests : IDisposable
             IPAddress.Parse("10.147.17.9"));
         IReadOnlyList<Peer>? seen = null;
         service.PeersChanged += peers => seen = peers;
-        var configPath = Path.Combine(_folder, "config.json");
 
-        File.SetAttributes(configPath, FileAttributes.ReadOnly);
+        // A folder at the path of the file makes the save fail on every
+        // platform, and it fails for a user with every right.
+        var configPath = Path.Combine(_folder, "config.json");
+        File.Delete(configPath);
+        Directory.CreateDirectory(configPath);
         try
         {
-            await Assert.ThrowsAnyAsync<Exception>(() => service.RunCycleAsync(default));
+            await service.RunCycleAsync(default);
         }
         finally
         {
-            File.SetAttributes(configPath, FileAttributes.Normal);
+            Directory.Delete(configPath);
         }
 
         Assert.NotNull(seen);
         Assert.Equal("chris", Assert.Single(seen).DisplayName);
+        Assert.Equal("chris", _config.RememberedNames["bb11223344"]);
         Assert.DoesNotContain("bb11223344", Store.Load().RememberedNames.Keys);
 
         await service.RunCycleAsync(default);
@@ -369,7 +427,10 @@ public class LobbyServiceTests : IDisposable
         var client = new BlockingZeroTierClient();
         await using var service = Build(client);
 
-        var first = service.RunCycleAsync(default);
+        // StartAsync starts the transport and then runs the first cycle. That
+        // cycle waits inside the client, so this test cannot await StartAsync
+        // until it opens the client.
+        var first = service.StartAsync(default);
         var second = service.RunCycleAsync(default);
 
         Assert.Equal(1, client.StatusCalls);
@@ -403,7 +464,7 @@ public class LobbyServiceTests : IDisposable
     {
         var client = new ScriptedZeroTierClient();
         var time = new FakeTimeProvider();
-        await using var service = Build(client, time);
+        await using var service = Build(client, timeProvider: time);
 
         await service.StartAsync(default);
 
@@ -423,7 +484,7 @@ public class LobbyServiceTests : IDisposable
             FailOn = call => call == 2 ? new IOException("disk") : null,
         };
         var time = new FakeTimeProvider();
-        await using var service = Build(client, time);
+        await using var service = Build(client, timeProvider: time);
         await service.StartAsync(default);
 
         time.Advance(LobbyService.CyclePeriod);
@@ -441,7 +502,7 @@ public class LobbyServiceTests : IDisposable
             FailOn = call => call == 2 ? new OperationCanceledException("not ours") : null,
         };
         var time = new FakeTimeProvider();
-        await using var service = Build(client, time);
+        await using var service = Build(client, timeProvider: time);
         await service.StartAsync(default);
 
         time.Advance(LobbyService.CyclePeriod);
@@ -449,5 +510,144 @@ public class LobbyServiceTests : IDisposable
         time.Advance(LobbyService.CyclePeriod);
 
         await client.WhenCalled(3).WaitAsync(WaitLimit);
+    }
+
+    [Fact]
+    public async Task LastCycleFault_holds_the_exception_from_a_failed_cycle()
+    {
+        var client = new ScriptedZeroTierClient
+        {
+            FailOn = call => call >= 2 ? new IOException("disk") : null,
+        };
+        var time = new FakeTimeProvider();
+        await using var service = Build(client, timeProvider: time);
+        await service.StartAsync(default);
+
+        Assert.Null(service.LastCycleFault);
+
+        time.Advance(LobbyService.CyclePeriod);
+        await client.WhenCalled(2).WaitAsync(WaitLimit);
+        time.Advance(LobbyService.CyclePeriod);
+
+        // Cycle 3 starts only after the pump handles the exception from cycle
+        // 2, and cycle 3 fails as well. So the property holds an exception at
+        // this point, whatever the order of the two tasks.
+        await client.WhenCalled(3).WaitAsync(WaitLimit);
+
+        var fault = Assert.IsType<IOException>(service.LastCycleFault);
+        Assert.Equal("disk", fault.Message);
+    }
+
+    [Fact]
+    public async Task LastCycleFault_returns_to_null_after_a_cycle_that_completes()
+    {
+        var client = new ScriptedZeroTierClient
+        {
+            FailOn = call => call == 2 ? new IOException("disk") : null,
+        };
+        var time = new FakeTimeProvider();
+        await using var service = Build(client, timeProvider: time);
+        await service.StartAsync(default);
+
+        time.Advance(LobbyService.CyclePeriod);
+        await client.WhenCalled(2).WaitAsync(WaitLimit);
+        time.Advance(LobbyService.CyclePeriod);
+        await client.WhenCalled(3).WaitAsync(WaitLimit);
+        time.Advance(LobbyService.CyclePeriod);
+
+        // Cycle 4 starts only after cycle 3 completes, and cycle 3 is the
+        // cycle that clears the property.
+        await client.WhenCalled(4).WaitAsync(WaitLimit);
+
+        Assert.Null(service.LastCycleFault);
+    }
+
+    [Fact]
+    public async Task CurrentHost_never_reports_this_machine()
+    {
+        await using var service = Build();
+        await service.StartAsync(default);
+        service.StartHosting();
+        await service.RunCycleAsync(default);
+
+        // A directed broadcast reaches this app as well, so the app hears its
+        // own announcement.
+        _transport.Deliver(_transport.Sent[^1].Payload, IPAddress.Parse("10.147.17.42"));
+
+        await service.RunCycleAsync(default);
+
+        Assert.True(service.IsHosting);
+        Assert.Null(service.CurrentHost);
+        Assert.Empty(service.Peers);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_cuts_a_display_name_that_this_app_would_reject()
+    {
+        await using var service = Build();
+        _config.DisplayName = new string('x', 41);
+
+        await service.StartAsync(default);
+
+        var sent = Assert.Single(_transport.Sent);
+        var table = new PeerTable(LobbyService.PeerExpiry, () => _now);
+        var allowed = IPv4Math.Subnet(IPAddress.Parse("10.147.17.42"), 24);
+
+        Assert.True(table.Accept(sent.Payload, IPAddress.Parse("10.147.17.42"), allowed));
+        Assert.Equal(
+            new string('x', PeerTable.MaxPlayerNameLength), Decode(sent.Payload).Player);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_keeps_a_value_that_the_caller_wrote_to_the_configuration()
+    {
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        // Task 9 writes the game path to this object after the build. The
+        // service must save that value, and not an earlier copy of the file.
+        _config.GamePath = @"C:\Games\midtown2.exe";
+        _transport.Deliver(
+            new Announcement
+            {
+                NodeId = "bb11223344", Player = "chris", Address = "10.147.17.9",
+            }.ToBytes(),
+            IPAddress.Parse("10.147.17.9"));
+
+        await service.RunCycleAsync(default);
+
+        var saved = Store.Load();
+        Assert.Equal(@"C:\Games\midtown2.exe", saved.GamePath);
+        Assert.Equal("chris", saved.RememberedNames["bb11223344"]);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_asks_ZeroTier_for_the_network_in_the_configuration()
+    {
+        await using var service = Build();
+
+        await service.StartAsync(default);
+
+        Assert.Equal("0123456789abcdef", _zeroTier.RequestedNetworkId);
+        Assert.Equal("10.147.17.42", service.MyAddress);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_remembers_no_name_while_the_ZeroTier_service_is_absent()
+    {
+        await using var service = Build();
+        await service.StartAsync(default);
+        _transport.Deliver(
+            new Announcement
+            {
+                NodeId = "bb11223344", Player = "chris", Address = "10.147.17.9",
+            }.ToBytes(),
+            IPAddress.Parse("10.147.17.9"));
+        _zeroTier.Status = null;
+
+        await service.RunCycleAsync(default);
+
+        Assert.Empty(Store.Load().RememberedNames);
+        Assert.Empty(_config.RememberedNames);
     }
 }

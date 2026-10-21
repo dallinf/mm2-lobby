@@ -1,5 +1,4 @@
 using System.Net;
-using Mm2Lobby.Core.Processes;
 using Mm2Lobby.Core.Tests.Fakes;
 using Mm2Lobby.Core.ZeroTier;
 
@@ -102,6 +101,15 @@ public class ZeroTierClientTests
     }
 
     [Fact]
+    public async Task GetNetworkAsync_returns_null_when_the_machine_joined_no_network()
+    {
+        var runner = new FakeProcessRunner()
+            .ReturnsJson("zerotier-cli", "-j listnetworks", ZeroTierFixtures.ListNetworksEmpty);
+
+        Assert.Null(await Build(runner).GetNetworkAsync(NetworkId, default));
+    }
+
+    [Fact]
     public async Task GetLinkQualityAsync_classifies_each_leaf_and_drops_the_roots()
     {
         var runner = new FakeProcessRunner()
@@ -134,6 +142,51 @@ public class ZeroTierClientTests
             .ReturnsJson("zerotier-cli", "-j listpeers", "{ not an array }");
 
         Assert.Empty(await Build(runner).GetLinkQualityAsync(default));
+    }
+
+    // A zerotier-cli of a later version can print valid JSON of another shape.
+    // Each reader asks for one root kind, and a document of another kind gives
+    // the empty answer.
+    [Fact]
+    public async Task GetStatusAsync_returns_null_when_the_output_is_an_array()
+    {
+        var runner = new FakeProcessRunner()
+            .ReturnsJson("zerotier-cli", "-j info", """["a09acf0233"]""");
+
+        Assert.Null(await Build(runner).GetStatusAsync(default));
+    }
+
+    [Fact]
+    public async Task GetNetworkAsync_returns_null_when_the_output_is_an_object()
+    {
+        var runner = new FakeProcessRunner()
+            .ReturnsJson(
+                "zerotier-cli", "-j listnetworks", """{"nwid":"0123456789abcdef"}""");
+
+        Assert.Null(await Build(runner).GetNetworkAsync(NetworkId, default));
+    }
+
+    [Fact]
+    public async Task GetLinkQualityAsync_returns_an_empty_map_when_the_output_is_an_object()
+    {
+        var runner = new FakeProcessRunner()
+            .ReturnsJson("zerotier-cli", "-j listpeers", """{"address":"bb11223344"}""");
+
+        Assert.Empty(await Build(runner).GetLinkQualityAsync(default));
+    }
+
+    [Fact]
+    public async Task GetLinkQualityAsync_answers_a_map_that_a_caller_cannot_change()
+    {
+        var runner = new FakeProcessRunner()
+            .ReturnsJson("zerotier-cli", "-j listpeers", "{ not an array }");
+
+        var quality = await Build(runner).GetLinkQualityAsync(default);
+
+        // Every empty answer shares one instance, so a caller that casts the
+        // map must not be able to add an entry to it.
+        Assert.Throws<NotSupportedException>(
+            () => ((IDictionary<string, LinkQuality>)quality).Add("bb11223344", LinkQuality.Direct));
     }
 
     [Fact]

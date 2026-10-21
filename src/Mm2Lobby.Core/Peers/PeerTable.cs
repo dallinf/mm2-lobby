@@ -46,7 +46,9 @@ public sealed class PeerTable
             source,
             message.Hosting,
             message.StartedAt,
-            message.AppVersion,
+            // A datagram that holds "appVersion":null parses to a null here,
+            // and LivePeer.AppVersion does not accept a null.
+            message.AppVersion ?? string.Empty,
             _clock());
 
         lock (_gate)

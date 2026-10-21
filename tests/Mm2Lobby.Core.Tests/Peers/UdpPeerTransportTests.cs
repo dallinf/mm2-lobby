@@ -47,6 +47,33 @@ public class UdpPeerTransportTests
     }
 
     [Fact]
+    public async Task A_second_transport_cannot_take_the_same_port()
+    {
+        var port = FreePort();
+
+        await using var first = new UdpPeerTransport();
+        await first.StartAsync(port, default);
+
+        await using var second = new UdpPeerTransport();
+
+        // The transport does not set ReuseAddress, so a second copy of the app
+        // fails here, and task 9 can report that MM2 Lobby already runs.
+        await Assert.ThrowsAsync<System.Net.Sockets.SocketException>(
+            () => second.StartAsync(port, default));
+    }
+
+    [Fact]
+    public async Task SendAsync_after_the_disposal_reports_the_disposal()
+    {
+        var transport = new UdpPeerTransport();
+        await transport.StartAsync(FreePort(), default);
+        await transport.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(
+            () => transport.SendAsync(new byte[] { 1 }, IPAddress.Loopback, 48200, default));
+    }
+
+    [Fact]
     public async Task StartAsync_twice_is_an_error()
     {
         await using var transport = new UdpPeerTransport();

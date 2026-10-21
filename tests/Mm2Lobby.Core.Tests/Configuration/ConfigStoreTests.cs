@@ -74,6 +74,19 @@ public class ConfigStoreTests : IDisposable
     }
 
     [Fact]
+    public void Load_treats_a_null_game_path_and_a_null_network_id_as_empty()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path_, """{"displayName":"x","gamePath":null,"zeroTierNetworkId":null}""");
+
+        var config = new ConfigStore(Path_).Load();
+
+        Assert.Equal(string.Empty, config.GamePath);
+        Assert.Equal(string.Empty, config.ZeroTierNetworkId);
+    }
+
+    [Fact]
     public void RememberedNames_ignores_the_case_of_a_node_id()
     {
         var store = new ConfigStore(Path_);

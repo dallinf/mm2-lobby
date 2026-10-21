@@ -26,6 +26,10 @@ public static class ZeroTierFixtures
       "status":"REQUESTING_CONFIGURATION","type":"PRIVATE"}]
     """;
 
+    public const string ListNetworksEmpty = """
+    []
+    """;
+
     public const string ListNetworksIPv6First = """
     [{"assignedAddresses":["fd01:2345::1/88","10.147.17.42/24"],
       "broadcastEnabled":true,"id":"0123456789abcdef","nwid":"0123456789abcdef",

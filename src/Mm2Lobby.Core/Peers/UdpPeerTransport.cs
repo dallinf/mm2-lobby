@@ -15,6 +15,7 @@ public sealed class UdpPeerTransport : IPeerTransport
     private UdpClient? _client;
     private CancellationTokenSource? _loop;
     private Task? _receive;
+    private bool _disposed;
 
     public event Action<byte[], IPAddress>? DatagramReceived;
 
@@ -28,8 +29,10 @@ public sealed class UdpPeerTransport : IPeerTransport
         var client = new UdpClient(AddressFamily.InterNetwork);
         try
         {
-            client.Client.SetSocketOption(
-                SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            // The app does not set ReuseAddress. The bind to 0.0.0.0 does not
+            // need it, and it lets a second copy of the app take the same port
+            // without a report. Without it, the second copy fails at the bind,
+            // and the window can tell the player that MM2 Lobby already runs.
             client.Client.Bind(new IPEndPoint(IPAddress.Any, port));
             client.EnableBroadcast = true;
         }
@@ -49,6 +52,10 @@ public sealed class UdpPeerTransport : IPeerTransport
     public async Task SendAsync(
         byte[] payload, IPAddress destination, int port, CancellationToken ct)
     {
+        // DisposeAsync clears _client, so this method must report the two
+        // states apart.
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
         var client = _client
             ?? throw new InvalidOperationException("The transport has not started.");
 
@@ -104,6 +111,7 @@ public sealed class UdpPeerTransport : IPeerTransport
 
     public async ValueTask DisposeAsync()
     {
+        _disposed = true;
         _loop?.Cancel();
         _client?.Dispose();
 

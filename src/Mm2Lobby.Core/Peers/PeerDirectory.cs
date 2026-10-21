@@ -17,6 +17,13 @@ public sealed class PeerDirectory
         _table = table;
     }
 
+    /// <param name="myNodeId">The ZeroTier node ID of this machine.</param>
+    /// <param name="rememberedNames">
+    /// The names the app remembers, by node ID. This method looks up a
+    /// lower-case node ID, so the caller must supply a map with the comparer
+    /// StringComparer.OrdinalIgnoreCase.
+    /// </param>
+    /// <param name="ct">The token that cancels the ZeroTier read.</param>
     public async Task<IReadOnlyList<Peer>> GetPeersAsync(
         string myNodeId,
         IReadOnlyDictionary<string, string> rememberedNames,
@@ -33,6 +40,7 @@ public sealed class PeerDirectory
             peers.Add(new Peer(
                 live.NodeId,
                 live.Player,
+                live.AppVersion,
                 live.Address,
                 IsOnline: true,
                 AppRunning: true,
@@ -48,6 +56,7 @@ public sealed class PeerDirectory
             peers.Add(new Peer(
                 nodeId,
                 NameOf(nodeId, rememberedNames),
+                AppVersion: string.Empty,
                 Address: null,
                 IsOnline: true,
                 AppRunning: false,
@@ -63,6 +72,7 @@ public sealed class PeerDirectory
             peers.Add(new Peer(
                 nodeId,
                 name,
+                AppVersion: string.Empty,
                 Address: null,
                 IsOnline: false,
                 AppRunning: false,
@@ -76,6 +86,7 @@ public sealed class PeerDirectory
             .ThenByDescending(peer => peer.AppRunning)
             .ThenByDescending(peer => peer.IsOnline)
             .ThenBy(peer => peer.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(peer => peer.NodeId, StringComparer.Ordinal)
             .ToList();
     }
 

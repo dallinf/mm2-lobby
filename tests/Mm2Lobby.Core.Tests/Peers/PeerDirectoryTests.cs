@@ -171,6 +171,50 @@ public class PeerDirectoryTests
     }
 
     [Fact]
+    public async Task Every_peer_carries_the_app_version_that_the_table_holds()
+    {
+        Hear("bb11223344", "chris", "10.147.17.9");
+
+        // A datagram can hold "appVersion":null, and Peer.AppVersion does not
+        // accept a null.
+        Assert.True(_table.Accept(
+            System.Text.Encoding.UTF8.GetBytes("""
+            {"proto":1,"appVersion":null,"nodeId":"ee11112222","player":"zoe",
+             "address":"10.147.17.11"}
+            """),
+            IPAddress.Parse("10.147.17.11"),
+            Allowed));
+
+        _zeroTier.Quality["cc55667788"] = LinkQuality.Relayed;
+        var remembered = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dd99887766"] = "jo",
+        };
+
+        var peers = await Build().GetPeersAsync(MyNodeId, remembered, default);
+
+        Assert.Equal("1.0.0", peers.Single(p => p.NodeId == "bb11223344").AppVersion);
+        Assert.Equal(string.Empty, peers.Single(p => p.NodeId == "ee11112222").AppVersion);
+        Assert.Equal(string.Empty, peers.Single(p => p.NodeId == "cc55667788").AppVersion);
+        Assert.Equal(string.Empty, peers.Single(p => p.NodeId == "dd99887766").AppVersion);
+    }
+
+    [Fact]
+    public async Task Two_peers_with_one_name_sort_by_the_node_id()
+    {
+        var remembered = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ff99887766"] = "sam",
+            ["aa11223344"] = "sam",
+        };
+
+        var peers = await Build().GetPeersAsync(MyNodeId, remembered, default);
+
+        Assert.Equal(
+            new[] { "aa11223344", "ff99887766" }, peers.Select(p => p.NodeId).ToArray());
+    }
+
+    [Fact]
     public async Task A_peer_heard_outside_the_expiry_falls_back_to_app_not_running()
     {
         var clock = new DateTimeOffset(2026, 10, 21, 18, 0, 0, TimeSpan.Zero);

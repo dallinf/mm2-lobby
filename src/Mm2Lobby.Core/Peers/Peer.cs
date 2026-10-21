@@ -10,6 +10,7 @@ namespace Mm2Lobby.Core.Peers;
 public sealed record Peer(
     string NodeId,
     string DisplayName,
+    string AppVersion,
     IPAddress? Address,
     bool IsOnline,
     bool AppRunning,

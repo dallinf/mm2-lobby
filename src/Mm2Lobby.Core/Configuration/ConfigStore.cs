@@ -37,6 +37,11 @@ public sealed class ConfigStore
                 config.DisplayName = Environment.MachineName;
             }
 
+            // A file that holds "gamePath":null parses to a null here, and
+            // neither property accepts a null.
+            config.GamePath ??= string.Empty;
+            config.ZeroTierNetworkId ??= string.Empty;
+
             config.RememberedNames = Rewrap(config.RememberedNames);
 
             return config;
@@ -52,7 +57,12 @@ public sealed class ConfigStore
         var folder = Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
 
-        File.WriteAllText(_path, JsonSerializer.Serialize(config, Json));
+        // The app writes a temporary file and then moves it. File.WriteAllText
+        // truncates the target first, and a crash in that moment loses every
+        // value in the file.
+        var temporary = _path + ".tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(config, Json));
+        File.Move(temporary, _path, overwrite: true);
     }
 
     private static AppConfig Defaults() => new() { DisplayName = Environment.MachineName };

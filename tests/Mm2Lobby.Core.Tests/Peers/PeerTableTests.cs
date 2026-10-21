@@ -92,12 +92,14 @@ public class PeerTableTests
         Assert.False(table.Accept(Good(a => a.NodeId = ""), Source, Allowed));
     }
 
-    [Fact]
-    public void Accept_rejects_an_empty_player_name()
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Accept_rejects_an_empty_player_name(string player)
     {
         var table = Build();
 
-        Assert.False(table.Accept(Good(a => a.Player = "   "), Source, Allowed));
+        Assert.False(table.Accept(Good(a => a.Player = player), Source, Allowed));
     }
 
     [Fact]
