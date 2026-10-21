@@ -117,6 +117,18 @@ public class ConfigStoreTests : IDisposable
     }
 
     [Fact]
+    public void Load_skips_a_remembered_name_with_a_blank_node_id()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path_, """{"rememberedNames":{"":"x","bb11223344":"chris"}}""");
+
+        var config = new ConfigStore(Path_).Load();
+
+        Assert.Single(config.RememberedNames);
+        Assert.Equal("chris", config.RememberedNames["bb11223344"]);
+    }
+
+    [Fact]
     public void DefaultPath_sits_under_the_application_data_folder()
     {
         Assert.Contains("Mm2Lobby", ConfigStore.DefaultPath);
