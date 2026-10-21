@@ -1,0 +1,220 @@
+using System.Net;
+using Mm2Lobby.Core.Configuration;
+using Mm2Lobby.Core.Lobby;
+using Mm2Lobby.Core.Peers;
+using Mm2Lobby.Core.Tests.Fakes;
+using Mm2Lobby.Core.ZeroTier;
+
+namespace Mm2Lobby.Core.Tests.Lobby;
+
+public class LobbyServiceTests : IDisposable
+{
+    private readonly string _folder = Path.Combine(
+        Path.GetTempPath(), $"mm2lobby-{Guid.NewGuid():N}");
+
+    private readonly FakeZeroTierClient _zeroTier = new();
+    private readonly FakePeerTransport _transport = new();
+    private DateTimeOffset _now = new(2026, 10, 21, 18, 0, 0, TimeSpan.Zero);
+
+    private ConfigStore Store => new(Path.Combine(_folder, "config.json"));
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_folder)) Directory.Delete(_folder, recursive: true);
+    }
+
+    private LobbyService Build()
+    {
+        var store = Store;
+        store.Save(new AppConfig
+        {
+            DisplayName = "dallin",
+            ZeroTierNetworkId = "0123456789abcdef",
+        });
+
+        var table = new PeerTable(LobbyService.PeerExpiry, () => _now);
+        return new LobbyService(
+            _zeroTier, _transport, table, new PeerDirectory(_zeroTier, table),
+            store, "1.0.0", () => _now);
+    }
+
+    private static Announcement Decode(byte[] payload)
+    {
+        var parsed = Announcement.TryParse(payload);
+        Assert.NotNull(parsed);
+        return parsed;
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_broadcasts_this_app_to_the_subnet_broadcast_address()
+    {
+        await using var service = Build();
+
+        await service.RunCycleAsync(default);
+
+        var sent = Assert.Single(_transport.Sent);
+        Assert.Equal(IPAddress.Parse("10.147.17.255"), sent.Destination);
+        Assert.Equal(LobbyService.Port, sent.Port);
+
+        var announcement = Decode(sent.Payload);
+        Assert.Equal("dallin", announcement.Player);
+        Assert.Equal("a09acf0233", announcement.NodeId);
+        Assert.Equal("10.147.17.42", announcement.Address);
+        Assert.Equal("1.0.0", announcement.AppVersion);
+        Assert.False(announcement.Hosting);
+    }
+
+    [Fact]
+    public async Task StartHosting_puts_the_host_flag_and_the_start_time_on_the_announcement()
+    {
+        await using var service = Build();
+        service.StartHosting();
+
+        await service.RunCycleAsync(default);
+
+        var announcement = Decode(Assert.Single(_transport.Sent).Payload);
+        Assert.True(service.IsHosting);
+        Assert.True(announcement.Hosting);
+        Assert.Equal(_now, announcement.StartedAt);
+    }
+
+    [Fact]
+    public async Task StopHosting_clears_the_host_flag()
+    {
+        await using var service = Build();
+        service.StartHosting();
+        service.StopHosting();
+
+        await service.RunCycleAsync(default);
+
+        Assert.False(service.IsHosting);
+        Assert.False(Decode(Assert.Single(_transport.Sent).Payload).Hosting);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_sends_nothing_when_the_machine_has_not_joined_the_network()
+    {
+        _zeroTier.Network = new ZeroTierNetwork(
+            "0123456789abcdef", "REQUESTING_CONFIGURATION", null, 0);
+        await using var service = Build();
+
+        await service.RunCycleAsync(default);
+
+        Assert.Empty(_transport.Sent);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_sends_nothing_when_the_ZeroTier_service_is_absent()
+    {
+        _zeroTier.Status = null;
+        await using var service = Build();
+
+        await service.RunCycleAsync(default);
+
+        Assert.Empty(_transport.Sent);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_raises_PeersChanged()
+    {
+        await using var service = Build();
+        IReadOnlyList<Peer>? seen = null;
+        service.PeersChanged += peers => seen = peers;
+
+        await service.RunCycleAsync(default);
+
+        Assert.NotNull(seen);
+    }
+
+    [Fact]
+    public async Task A_delivered_announcement_reaches_the_peer_list()
+    {
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        _transport.Deliver(
+            new Announcement
+            {
+                AppVersion = "1.0.0",
+                NodeId = "bb11223344",
+                Player = "chris",
+                Address = "10.147.17.9",
+                Hosting = true,
+            }.ToBytes(),
+            IPAddress.Parse("10.147.17.9"));
+
+        await service.RunCycleAsync(default);
+
+        var host = service.CurrentHost;
+        Assert.NotNull(host);
+        Assert.Equal("chris", host.DisplayName);
+        Assert.Equal(IPAddress.Parse("10.147.17.9"), host.Address);
+    }
+
+    [Fact]
+    public async Task A_delivered_announcement_from_outside_the_subnet_is_ignored()
+    {
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        _transport.Deliver(
+            new Announcement
+            {
+                NodeId = "bb11223344", Player = "chris", Address = "192.168.1.9",
+            }.ToBytes(),
+            IPAddress.Parse("192.168.1.9"));
+
+        await service.RunCycleAsync(default);
+
+        Assert.Empty(service.Peers);
+    }
+
+    [Fact]
+    public async Task RunCycleAsync_remembers_the_name_of_a_peer_it_heard()
+    {
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        _transport.Deliver(
+            new Announcement
+            {
+                NodeId = "bb11223344", Player = "chris", Address = "10.147.17.9",
+            }.ToBytes(),
+            IPAddress.Parse("10.147.17.9"));
+
+        await service.RunCycleAsync(default);
+
+        Assert.Equal("chris", Store.Load().RememberedNames["bb11223344"]);
+    }
+
+    [Fact]
+    public async Task StartAsync_starts_the_transport_on_the_lobby_port()
+    {
+        await using var service = Build();
+
+        await service.StartAsync(default);
+
+        Assert.Equal(LobbyService.Port, _transport.StartedPort);
+    }
+
+    [Fact]
+    public async Task MyAddress_reports_this_machine_on_the_virtual_network()
+    {
+        await using var service = Build();
+
+        await service.RunCycleAsync(default);
+
+        Assert.Equal("10.147.17.42", service.MyAddress);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_disposes_the_transport()
+    {
+        var service = Build();
+        await service.StartAsync(default);
+
+        await service.DisposeAsync();
+
+        Assert.True(_transport.Disposed);
+    }
+}
