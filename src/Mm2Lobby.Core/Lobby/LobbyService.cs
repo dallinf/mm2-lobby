@@ -32,6 +32,8 @@ public sealed class LobbyService : IAsyncDisposable
     private DateTimeOffset? _hostingSince;
     private CancellationTokenSource? _loop;
     private Task? _pump;
+    private bool _started;
+    private bool _disposed;
 
     public LobbyService(
         IZeroTierClient zeroTier,
@@ -66,6 +68,13 @@ public sealed class LobbyService : IAsyncDisposable
 
     public async Task StartAsync(CancellationToken ct)
     {
+        if (_started)
+        {
+            throw new InvalidOperationException("The lobby service has already started.");
+        }
+
+        _started = true;
+
         _transport.DatagramReceived += OnDatagram;
         await _transport.StartAsync(Port, ct);
 
@@ -113,9 +122,10 @@ public sealed class LobbyService : IAsyncDisposable
 
     private void OnDatagram(byte[] payload, IPAddress source)
     {
-        if (_network?.Address is null) return;
+        var network = _network;
+        if (network?.Address is null) return;
 
-        var allowed = IPv4Math.Subnet(_network.Address, _network.PrefixLength);
+        var allowed = IPv4Math.Subnet(network.Address, network.PrefixLength);
         _table.Accept(payload, source, allowed);
     }
 
@@ -153,11 +163,23 @@ public sealed class LobbyService : IAsyncDisposable
             {
                 return;
             }
+            catch (Exception)
+            {
+                // A failed cycle must not end the loop. Any error in a cycle,
+                // such as a locked config file or a failed send, is ignored,
+                // and the next tick tries again. Mm2Lobby.Core has no
+                // logging, so the error is lost. A fault that persists
+                // leaves the peer list stale, which a player can see, where a
+                // stopped loop would show nothing.
+            }
         }
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         _loop?.Cancel();
         _transport.DatagramReceived -= OnDatagram;
 

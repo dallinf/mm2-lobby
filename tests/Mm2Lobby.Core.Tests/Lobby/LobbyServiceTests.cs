@@ -115,15 +115,25 @@ public class LobbyServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RunCycleAsync_raises_PeersChanged()
+    public async Task RunCycleAsync_raises_PeersChanged_with_the_peers_it_found()
     {
         await using var service = Build();
+        await service.StartAsync(default);
+        _transport.Deliver(
+            new Announcement
+            {
+                NodeId = "bb11223344", Player = "chris", Address = "10.147.17.9",
+            }.ToBytes(),
+            IPAddress.Parse("10.147.17.9"));
         IReadOnlyList<Peer>? seen = null;
         service.PeersChanged += peers => seen = peers;
 
         await service.RunCycleAsync(default);
 
         Assert.NotNull(seen);
+        var peer = Assert.Single(seen);
+        Assert.Equal("bb11223344", peer.NodeId);
+        Assert.Equal("chris", peer.DisplayName);
     }
 
     [Fact]
@@ -216,5 +226,28 @@ public class LobbyServiceTests : IDisposable
         await service.DisposeAsync();
 
         Assert.True(_transport.Disposed);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_called_twice_does_not_throw()
+    {
+        var service = Build();
+        await service.StartAsync(default);
+
+        await service.DisposeAsync();
+
+        await service.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StartAsync_called_twice_throws_and_leaves_one_subscriber()
+    {
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.StartAsync(default));
+
+        Assert.Equal(1, _transport.SubscriberCount);
     }
 }

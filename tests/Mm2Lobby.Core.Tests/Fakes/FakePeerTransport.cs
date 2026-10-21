@@ -13,6 +13,8 @@ public sealed class FakePeerTransport : IPeerTransport
 
     public event Action<byte[], IPAddress>? DatagramReceived;
 
+    public int SubscriberCount => DatagramReceived?.GetInvocationList().Length ?? 0;
+
     public Task StartAsync(int port, CancellationToken ct)
     {
         StartedPort = port;
