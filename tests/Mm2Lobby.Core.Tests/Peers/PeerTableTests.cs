@@ -118,6 +118,15 @@ public class PeerTableTests
     }
 
     [Fact]
+    public void Accept_rejects_an_address_that_does_not_parse()
+    {
+        var table = Build();
+
+        Assert.False(table.Accept(Good(a => a.Address = "not-an-address"), Source, Allowed));
+        Assert.Empty(table.GetLive());
+    }
+
+    [Fact]
     public void Accept_replaces_an_earlier_announcement_from_the_same_node()
     {
         var table = Build();
