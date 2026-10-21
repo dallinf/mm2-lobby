@@ -83,6 +83,40 @@ public class ConfigStoreTests : IDisposable
     }
 
     [Fact]
+    public void Load_treats_a_null_remembered_names_as_empty()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path_, """{"displayName":"x","rememberedNames":null}""");
+
+        var config = new ConfigStore(Path_).Load();
+
+        Assert.Empty(config.RememberedNames);
+    }
+
+    [Fact]
+    public void Load_keeps_one_entry_when_node_ids_differ_only_in_case()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path_, """{"rememberedNames":{"AB11":"x","ab11":"y"}}""");
+
+        var config = new ConfigStore(Path_).Load();
+
+        Assert.Single(config.RememberedNames);
+        Assert.Equal(config.RememberedNames["AB11"], config.RememberedNames["ab11"]);
+    }
+
+    [Fact]
+    public void Load_skips_a_remembered_name_with_a_null_value()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path_, """{"rememberedNames":{"bb11223344":null}}""");
+
+        var config = new ConfigStore(Path_).Load();
+
+        Assert.Empty(config.RememberedNames);
+    }
+
+    [Fact]
     public void DefaultPath_sits_under_the_application_data_folder()
     {
         Assert.Contains("Mm2Lobby", ConfigStore.DefaultPath);

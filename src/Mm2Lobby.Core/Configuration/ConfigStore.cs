@@ -37,8 +37,7 @@ public sealed class ConfigStore
                 config.DisplayName = Environment.MachineName;
             }
 
-            config.RememberedNames = new Dictionary<string, string>(
-                config.RememberedNames, StringComparer.OrdinalIgnoreCase);
+            config.RememberedNames = Rewrap(config.RememberedNames);
 
             return config;
         }
@@ -57,4 +56,18 @@ public sealed class ConfigStore
     }
 
     private static AppConfig Defaults() => new() { DisplayName = Environment.MachineName };
+
+    private static Dictionary<string, string> Rewrap(Dictionary<string, string>? source)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (source is null) return map;
+
+        foreach (var (nodeId, name) in source)
+        {
+            if (string.IsNullOrWhiteSpace(nodeId) || string.IsNullOrWhiteSpace(name)) continue;
+            map[nodeId] = name;
+        }
+
+        return map;
+    }
 }
