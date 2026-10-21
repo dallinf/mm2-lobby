@@ -110,6 +110,16 @@ public class PeerTableTests
     }
 
     [Fact]
+    public void Accept_accepts_a_player_name_at_the_maximum_length()
+    {
+        var table = Build();
+        var longest = new string('x', PeerTable.MaxPlayerNameLength);
+
+        Assert.True(table.Accept(Good(a => a.Player = longest), Source, Allowed));
+        Assert.Single(table.GetLive());
+    }
+
+    [Fact]
     public void Accept_rejects_a_payload_that_claims_another_address()
     {
         var table = Build();
@@ -155,9 +165,34 @@ public class PeerTableTests
     public void GetLive_drops_a_peer_heard_outside_the_expiry()
     {
         var table = Build();
-        table.Accept(Good(), Source, Allowed);
+        Assert.True(table.Accept(Good(), Source, Allowed));
+        Assert.Single(table.GetLive());
 
         _now = _now.AddSeconds(7);
+
+        Assert.Empty(table.GetLive());
+    }
+
+    [Fact]
+    public void GetLive_keeps_a_peer_heard_just_inside_the_expiry()
+    {
+        var table = Build();
+        Assert.True(table.Accept(Good(), Source, Allowed));
+        Assert.Single(table.GetLive());
+
+        _now = _now.AddMilliseconds(5999);
+
+        Assert.Single(table.GetLive());
+    }
+
+    [Fact]
+    public void GetLive_drops_a_peer_heard_exactly_at_the_expiry()
+    {
+        var table = Build();
+        Assert.True(table.Accept(Good(), Source, Allowed));
+        Assert.Single(table.GetLive());
+
+        _now = _now.AddSeconds(6);
 
         Assert.Empty(table.GetLive());
     }

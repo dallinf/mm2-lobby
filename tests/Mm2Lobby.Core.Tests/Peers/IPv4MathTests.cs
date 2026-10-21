@@ -9,6 +9,9 @@ public class IPv4MathTests
     [InlineData("10.147.17.42", 24, "10.147.17.0")]
     [InlineData("10.147.17.42", 16, "10.147.0.0")]
     [InlineData("192.168.1.130", 25, "192.168.1.128")]
+    [InlineData("192.168.1.42", 25, "192.168.1.0")]
+    [InlineData("10.147.17.42", 0, "0.0.0.0")]
+    [InlineData("10.147.17.42", 32, "10.147.17.42")]
     public void Subnet_masks_off_the_host_bits(string address, int prefix, string expected)
     {
         var subnet = IPv4Math.Subnet(IPAddress.Parse(address), prefix);
@@ -21,6 +24,9 @@ public class IPv4MathTests
     [InlineData("10.147.17.42", 24, "10.147.17.255")]
     [InlineData("10.147.17.42", 16, "10.147.255.255")]
     [InlineData("192.168.1.130", 25, "192.168.1.255")]
+    [InlineData("192.168.1.42", 25, "192.168.1.127")]
+    [InlineData("10.147.17.42", 0, "255.255.255.255")]
+    [InlineData("10.147.17.42", 32, "10.147.17.42")]
     public void BroadcastAddress_sets_every_host_bit(string address, int prefix, string expected)
     {
         var broadcast = IPv4Math.BroadcastAddress(IPAddress.Parse(address), prefix);
