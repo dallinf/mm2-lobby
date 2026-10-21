@@ -115,7 +115,18 @@ public sealed class LobbyService : IAsyncDisposable
             Peers = await _directory.GetPeersAsync(
                 _status?.NodeId ?? string.Empty, _config.RememberedNames, ct);
 
-            PeersChanged?.Invoke(Peers);
+            try
+            {
+                PeersChanged?.Invoke(Peers);
+            }
+            catch (Exception)
+            {
+                // A subscriber must not throw. If one does, the service
+                // ignores the error, because one bad handler must not stop
+                // the names from being saved for the whole session.
+                // Mm2Lobby.Core has no logging, so the error is lost.
+            }
+
             RememberNames();
         }
         finally

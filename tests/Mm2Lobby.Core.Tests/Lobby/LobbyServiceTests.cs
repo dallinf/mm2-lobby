@@ -326,4 +326,22 @@ public class LobbyServiceTests : IDisposable
 
         Assert.Equal(2, client.StatusCalls);
     }
+
+    [Fact]
+    public async Task RunCycleAsync_saves_the_names_when_a_PeersChanged_subscriber_throws()
+    {
+        await using var service = Build();
+        await service.StartAsync(default);
+        _transport.Deliver(
+            new Announcement
+            {
+                NodeId = "bb11223344", Player = "chris", Address = "10.147.17.9",
+            }.ToBytes(),
+            IPAddress.Parse("10.147.17.9"));
+        service.PeersChanged += _ => throw new InvalidOperationException("bad handler");
+
+        await service.RunCycleAsync(default);
+
+        Assert.Equal("chris", Store.Load().RememberedNames["bb11223344"]);
+    }
 }
