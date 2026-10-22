@@ -79,18 +79,38 @@ public sealed class FirewallCheck : ICheck
                 "Run the Midtown Madness 2 check first.");
         }
 
-        foreach (var (direction, ruleName) in new[]
+        // Each elevated process shows one administrator prompt. The plain
+        // runner needs no prompt, so the app asks it which rules exist and
+        // deletes only those rules. The common case, a first run, deletes
+        // nothing and shows two prompts.
+        var inboundExists = await RuleExistsAsync(InboundRuleName, ct);
+        var outboundExists = await RuleExistsAsync(OutboundRuleName, ct);
+
+        foreach (var (direction, ruleName, exists) in new[]
         {
-            ("in", InboundRuleName),
-            ("out", OutboundRuleName),
+            ("in", InboundRuleName, inboundExists),
+            ("out", OutboundRuleName, outboundExists),
         })
         {
             // The app deletes the old rule first. A rule that names an old
-            // program path then cannot stay. Netsh returns a non-zero exit
-            // code when no rule exists. That is not a failure, so the app
-            // ignores the exit code of the delete.
-            await _elevatedRunner.RunAsync(
-                "netsh.exe", $"advfirewall firewall delete rule name=\"{ruleName}\"", ct);
+            // program path then cannot stay.
+            if (exists)
+            {
+                var deleteArguments = $"advfirewall firewall delete rule name=\"{ruleName}\"";
+                var deleted = await _elevatedRunner.RunAsync("netsh.exe", deleteArguments, ct);
+
+                // The rule existed a moment ago, so a non-zero exit code is a
+                // real failure, for example a refused administrator prompt.
+                if (!deleted.Succeeded)
+                {
+                    return new CheckResult(
+                        Name,
+                        CheckStatus.Fail,
+                        $"netsh did not delete the old {direction} rule (exit code {deleted.ExitCode}). "
+                            + "If you chose No at the administrator prompt, that is the cause.",
+                        "Open an administrator command prompt and run: netsh " + deleteArguments);
+                }
+            }
 
             var arguments =
                 $"advfirewall firewall add rule name=\"{ruleName}\" "
