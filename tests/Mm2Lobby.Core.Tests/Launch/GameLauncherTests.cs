@@ -60,4 +60,30 @@ public class GameLauncherTests
         Assert.Contains("TCP/IP", steps[1]);
         Assert.Contains("10.147.17.42", steps[2]);
     }
+
+    [Fact]
+    public void JoinInstructions_ForHost_name_the_host_choice_in_the_second_step()
+    {
+        var steps = JoinInstructions.ForHost();
+
+        Assert.Equal(3, steps.Count);
+        Assert.Contains("Multiplayer", steps[0]);
+        Assert.Contains("TCP/IP", steps[1]);
+        Assert.Contains("Host", steps[1]);
+    }
+
+    [Fact]
+    public void BuildPlan_rejects_a_path_with_no_folder()
+    {
+        Assert.Throws<ArgumentException>(
+            () => GameLauncher.BuildPlan(Path.GetPathRoot(Path.GetTempPath())!));
+    }
+
+    [Fact]
+    public void BuildPlan_makes_a_relative_path_absolute()
+    {
+        var plan = GameLauncher.BuildPlan("midtown2.exe");
+
+        Assert.True(Path.IsPathRooted(plan.ExecutablePath));
+    }
 }
