@@ -37,7 +37,8 @@
 [CmdletBinding()]
 param(
     [switch] $SkipInteractive,
-    [int]    $ExpectedTests = 365
+    [int]    $ExpectedTests = 365,
+    [string] $ExePath
 )
 
 $ErrorActionPreference = 'Continue'
@@ -243,16 +244,21 @@ else {
 Add-Section '2. The tools this script needs'
 # ---------------------------------------------------------------------------
 
-$repoRoot = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path }
-$solution = Join-Path $repoRoot 'Mm2Lobby.sln'
+$scriptFolder = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$repoRoot     = Split-Path -Parent $scriptFolder
+$solution     = Join-Path $repoRoot 'Mm2Lobby.sln'
+$haveRepo     = Test-Path -LiteralPath $solution
 
-if (Test-Path -LiteralPath $solution) {
+if ($haveRepo) {
     Add-Result 'PASS' ("The script found the repository at {0}" -f $repoRoot)
 }
 else {
-    Add-Result 'FAIL' ("The script found no Mm2Lobby.sln at {0}" -f $repoRoot)
-    Add-Line '     Put this script in the scripts folder of the repository. Then run it'
-    Add-Line '     again. The build steps cannot run without the repository.'
+    # The script also runs on its own, beside a program that somebody else
+    # built. The Windows questions in section 5 need no repository, and they
+    # hold the answers that matter most.
+    Add-Result 'INFO' 'The script runs on its own, outside the repository.'
+    Add-Line '     The script therefore skips the build, the tests, and the publish.'
+    Add-Line '     Section 5 still runs, and section 5 holds the main questions.'
 }
 
 $sdkProbe = Invoke-Probe 'dotnet --list-sdks'
@@ -274,14 +280,19 @@ if ($sdkVersions.Count -gt 0) {
     if ($haveNet10) {
         Add-Result 'PASS' 'This computer has a .NET 10 SDK. The projects need it.'
     }
-    else {
+    elseif ($haveRepo) {
         Add-Result 'FAIL' ("This computer has {0} SDK, and the projects need .NET 10." -f $sdkVersions[0])
         Add-Line '     Install the .NET 10 SDK from https://dotnet.microsoft.com/download'
         Add-Line '     A second SDK does no harm. The old one stays.'
         Add-Line '     Then run this script again. Section 5 still runs without it.'
     }
+    else {
+        Add-Result 'INFO' ("This computer has {0} SDK and no .NET 10 SDK." -f $sdkVersions[0])
+        Add-Line '     The program beside this script carries its own runtime, so it needs'
+        Add-Line '     no SDK. This line matters only to somebody who builds the program.'
+    }
 }
-else {
+elseif ($haveRepo) {
     Add-Result 'FAIL' 'The dotnet command names no SDK.'
     Add-Code $sdkProbe
     Add-Output 'The output' $sdkProbe.Output
@@ -289,8 +300,12 @@ else {
     Add-Line '     Install the .NET 10 SDK from https://dotnet.microsoft.com/download'
     Add-Line '     Section 5 still runs without it.'
 }
+else {
+    Add-Result 'INFO' 'This computer has no .NET SDK, and it needs none.'
+    Add-Line '     The program beside this script carries its own runtime.'
+}
 
-$canBuild = $haveNet10 -and (Test-Path -LiteralPath $solution)
+$canBuild = $haveNet10 -and $haveRepo
 
 # ---------------------------------------------------------------------------
 Add-Section '3. The build and the tests'
@@ -383,8 +398,23 @@ Add-Section '4. The published program'
 $publishDir = Join-Path $repoRoot 'src\Mm2Lobby.App\bin\Release\net10.0\win-x64\publish'
 $exePath    = Join-Path $publishDir 'Mm2Lobby.App.exe'
 
+# The program reaches this computer in one of three ways. The caller names it,
+# or a publish here builds it, or somebody put it beside this script.
+$besideScript = Join-Path $scriptFolder 'Mm2Lobby.App.exe'
+
+if ($ExePath -and (Test-Path -LiteralPath $ExePath)) {
+    $exePath    = (Resolve-Path -LiteralPath $ExePath).Path
+    $publishDir = Split-Path -Parent $exePath
+    Add-Result 'INFO' ("The caller named the program: {0}" -f $exePath)
+}
+elseif (-not $canBuild -and (Test-Path -LiteralPath $besideScript)) {
+    $exePath    = $besideScript
+    $publishDir = $scriptFolder
+    Add-Result 'INFO' 'The program sits beside this script. Somebody else built it.'
+}
+
 if (-not $canBuild) {
-    Add-Result 'SKIP' 'The script skipped the publish, because section 2 failed.'
+    Add-Result 'SKIP' 'The script built nothing, because it has no repository or no .NET 10 SDK.'
 }
 else {
     Push-Location $repoRoot
@@ -402,11 +432,12 @@ else {
     Add-Line 'The command names no runtime. The project file must supply it.'
     $publish = Invoke-Probe $command
 
-    if ($publish.ExitCode -eq 0) {
+    if ((Test-HasCode $publish) -and $publish.ExitCode -eq 0) {
         Add-Result 'PASS' 'The publish succeeded.'
     }
     else {
-        Add-Result 'FAIL' ("The publish failed with the code {0}." -f $publish.ExitCode)
+        Add-Result 'FAIL' 'The publish failed.'
+        Add-Code $publish
         Add-Output 'The output' $publish.Output 25
     }
 
@@ -423,10 +454,18 @@ else {
 
 if (Test-Path -LiteralPath $exePath) {
     $exe = Get-Item -LiteralPath $exePath
-    Add-Result 'PASS' ("The publish folder holds Mm2Lobby.App.exe, {0:N1} MB." -f ($exe.Length / 1MB))
+    Add-Result 'PASS' ("The script found Mm2Lobby.App.exe, {0:N1} MB, at {1}" -f ($exe.Length / 1MB), $exe.DirectoryName)
 
     # A player copies one file. Any other program file beside the exe would
     # therefore break the copy. The pdb files are large and a player needs none.
+    #
+    # This test reads a publish folder only. A shared folder holds this script
+    # and other files on purpose, so the same test there would report noise.
+    if (-not $canBuild) {
+        Add-Result 'INFO' 'The script did not test the folder, because it is not a publish folder.'
+    }
+    else {
+
     $others = Get-ChildItem -LiteralPath $publishDir -File |
         Where-Object { $_.Name -ne 'Mm2Lobby.App.exe' }
 
@@ -448,6 +487,8 @@ if (Test-Path -LiteralPath $exePath) {
         }
         Add-Line '    Copy only Mm2Lobby.App.exe to another computer.'
     }
+
+    }
 }
 else {
     Add-Result 'FAIL' ("The script found no exe at {0}" -f $exePath)
@@ -457,7 +498,7 @@ else {
     # folder with no runtime name, and the program then needs .NET on the
     # computer of every player. This test names that case.
     $plainDir = Join-Path $repoRoot 'src\Mm2Lobby.App\bin\Release\net10.0\publish'
-    if (Test-Path -LiteralPath $plainDir) {
+    if ($canBuild -and (Test-Path -LiteralPath $plainDir)) {
         Add-Result 'FAIL' ("The publish wrote to {0} instead." -f $plainDir)
         Add-Line '     The project file did not supply the runtime. Every player would then'
         Add-Line '     need .NET on their own computer. Tell the developer about this line.'
