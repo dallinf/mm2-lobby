@@ -687,17 +687,27 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     }
 
     /// <summary>
-    /// Takes the result off every check row. The checks ran against the old
-    /// network ID, and the ZeroTier check reads that ID. So a row that kept
-    /// its Pass would assert something that no longer holds.
+    /// Takes the result off every check row, and takes Host and Join away.
+    /// The checks ran against the old network ID, and the ZeroTier check reads
+    /// that ID. So a row that kept its Pass would assert something that no
+    /// longer holds.
     /// </summary>
     /// <remarks>
+    /// The window does not offer an action whose condition it cannot verify.
+    /// The checks gate the two buttons, and a live Host button promises a race
+    /// that the app cannot give: a service that cannot find the new network
+    /// sends no announcement, and no friend sees the race. A stale row above
+    /// two live buttons tells the player the same lie with the buttons.
+    ///
     /// This method also opens the setup panel. The Check again button sits
     /// inside that panel, and the panel closes itself once every check passes.
     /// A closed panel would hide the button that the message names.
     /// </remarks>
     private void MarkTheChecksStale()
     {
+        _preflightPassed = false;
+        UpdateTheButtons();
+
         if (CheckRows.Count == 0) return;
 
         var names = CheckRows.Select(row => row.Name).ToList();

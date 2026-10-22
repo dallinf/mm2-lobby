@@ -1017,6 +1017,36 @@ public class LobbyViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_new_network_ID_takes_Host_and_Join_away()
+    {
+        // The ZeroTier check gates the two buttons, and that check reads the
+        // network ID. A new ID therefore makes the gate unknown. A live Host
+        // button would promise a race that the app cannot give: a service that
+        // cannot find the new network sends no announcement, and no friend
+        // sees the race.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.True(model.CanHost);
+        Assert.True(model.CanJoin);
+
+        model.ZeroTierNetworkId = "8056c2e21c000001";
+
+        Assert.False(model.CanHost);
+        Assert.False(model.CanJoin);
+
+        // Check again is the way back.
+        await model.CheckAgainAsync();
+
+        Assert.True(model.CanHost);
+    }
+
+    [Fact]
     public async Task The_same_network_ID_leaves_the_check_rows_alone()
     {
         AddCheck("ZeroTier");
