@@ -26,10 +26,14 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     /// settings screen, so this text is the only place that tells the player
     /// the rule and the page that shows the ID.
     /// </summary>
-    private const string BadNetworkIdMessage =
-        "The app did not save that network ID. An ID has 16 characters, and each "
-        + "character is 0-9 or a-f. ZeroTier Central at https://my.zerotier.com "
-        + "shows the ID of your network.";
+    /// <remarks>
+    /// The text reads the length from NetworkIdRule. A message that holds the
+    /// number itself becomes a lie as soon as the rule changes.
+    /// </remarks>
+    private static readonly string BadNetworkIdMessage =
+        $"The app did not save that network ID. An ID has {NetworkIdRule.Length} "
+        + "characters, and each character is 0-9 or a-f. ZeroTier Central at "
+        + "https://my.zerotier.com shows the ID of your network.";
 
     /// <summary>
     /// The message after a saved ID. The checks read the ID again on every
