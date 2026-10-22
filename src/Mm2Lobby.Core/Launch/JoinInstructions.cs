@@ -1,8 +1,9 @@
 namespace Mm2Lobby.Core.Launch;
 
 /// <summary>
-/// This class holds the steps that the window shows after the app starts the game. MM2 shows its own dialog windows.
-/// These windows can refuse Ctrl+V. The window therefore tells the player to type the address.
+/// This class holds the steps that the window shows after the app starts the game.
+/// MM2 shows its own dialogs. These dialogs can refuse Ctrl+V. The app therefore
+/// tells the player to type the address.
 /// </summary>
 public static class JoinInstructions
 {
