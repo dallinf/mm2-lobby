@@ -1,8 +1,8 @@
 namespace Mm2Lobby.Core.Launch;
 
 /// <summary>
-/// Starts a process and does not wait for it. Mm2Lobby.Windows implements it,
-/// which is what keeps System.Diagnostics.Process out of Mm2Lobby.Core.
+/// An implementation starts a process. It does not wait for the process.
+/// Mm2Lobby.Windows implements this interface. Mm2Lobby.Core therefore does not use System.Diagnostics.Process.
 /// </summary>
 public interface IProcessLauncher
 {

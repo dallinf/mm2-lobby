@@ -1,8 +1,8 @@
 namespace Mm2Lobby.Core.Launch;
 
 /// <summary>
-/// Phase one: start MM2 and let the player type the host address. Phase two
-/// will add a DirectPlay lobby client that supplies the address instead.
+/// In phase one, this class starts MM2. The player types the host address.
+/// In phase two, a DirectPlay lobby client will give the address to MM2. The player will then type nothing.
 /// </summary>
 public sealed class GameLauncher
 {

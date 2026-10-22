@@ -1,7 +1,7 @@
 namespace Mm2Lobby.Core.Preflight;
 
 /// <summary>
-/// Runs every check, even after one check fails. The player therefore sees the
+/// This class runs every check, even after one check fails. The player therefore sees the
 /// whole list at the same time, not one problem for each attempt.
 /// </summary>
 public sealed class PreflightRunner
@@ -20,7 +20,11 @@ public sealed class PreflightRunner
             {
                 results.Add(await check.RunAsync(ct));
             }
-            catch (Exception e) when (e is not OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception e)
             {
                 results.Add(new CheckResult(
                     check.Name,

@@ -6,6 +6,6 @@ public interface ICheck
 
     Task<CheckResult> RunAsync(CancellationToken ct);
 
-    /// <summary>Applies the fix. Then returns a new result for the check.</summary>
+    /// <summary>This method applies the fix. It then returns a new result for the check.</summary>
     Task<CheckResult> FixAsync(CancellationToken ct);
 }

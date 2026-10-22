@@ -70,20 +70,51 @@ public class PreflightRunnerTests
 
         var result = Assert.Single(await runner.RunAllAsync(default));
 
+        Assert.Equal("Firewall", result.Name);
         Assert.Equal(CheckStatus.Unavailable, result.Status);
         Assert.Contains("no netsh", result.Message);
     }
 
     [Fact]
+    public async Task RunAllAsync_keeps_running_after_a_check_throws()
+    {
+        var runner = new PreflightRunner(new ICheck[]
+        {
+            new StubCheck("Firewall", CheckStatus.Pass, new InvalidOperationException("no netsh")),
+            new StubCheck("DirectPlay", CheckStatus.Pass),
+        });
+
+        var results = await runner.RunAllAsync(default);
+
+        Assert.Equal(new[] { CheckStatus.Unavailable, CheckStatus.Pass },
+            results.Select(result => result.Status).ToArray());
+    }
+
+    [Fact]
     public async Task RunAllAsync_lets_a_cancellation_propagate()
     {
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
         var runner = new PreflightRunner(new ICheck[]
         {
             new StubCheck("ZeroTier", CheckStatus.Pass, new OperationCanceledException()),
         });
 
         await Assert.ThrowsAsync<OperationCanceledException>(
-            () => runner.RunAllAsync(default));
+            () => runner.RunAllAsync(cancelled.Token));
+    }
+
+    [Fact]
+    public async Task RunAllAsync_turns_a_foreign_cancellation_into_an_unavailable_result()
+    {
+        var runner = new PreflightRunner(new ICheck[]
+        {
+            new StubCheck("Firewall", CheckStatus.Pass, new OperationCanceledException()),
+        });
+
+        var result = Assert.Single(await runner.RunAllAsync(default));
+
+        Assert.Equal(CheckStatus.Unavailable, result.Status);
     }
 
     [Fact]
@@ -98,6 +129,18 @@ public class PreflightRunnerTests
 
         Assert.True(PreflightRunner.AllPassed(passed));
         Assert.False(PreflightRunner.AllPassed(mixed));
+    }
+
+    [Fact]
+    public void AllPassed_is_false_when_a_check_is_unavailable()
+    {
+        var unavailable = new[]
+        {
+            new CheckResult("a", CheckStatus.Pass, "", null),
+            new CheckResult("b", CheckStatus.Unavailable, "", null),
+        };
+
+        Assert.False(PreflightRunner.AllPassed(unavailable));
     }
 
     [Fact]

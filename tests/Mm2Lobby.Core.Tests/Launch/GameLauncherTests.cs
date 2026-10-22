@@ -27,7 +27,9 @@ public class GameLauncherTests
     [InlineData("   ")]
     public void BuildPlan_rejects_an_empty_path(string path)
     {
-        Assert.Throws<ArgumentException>(() => GameLauncher.BuildPlan(path));
+        var exception = Assert.Throws<ArgumentException>(() => GameLauncher.BuildPlan(path));
+
+        Assert.Equal("gamePath", exception.ParamName);
     }
 
     [Fact]
@@ -38,7 +40,7 @@ public class GameLauncherTests
 
         new GameLauncher(launcher).Launch(path);
 
-        Assert.Equal(Path.GetFullPath(path), Assert.Single(launcher.Started).ExecutablePath);
+        Assert.Equal(GameLauncher.BuildPlan(path), Assert.Single(launcher.Started));
     }
 
     [Fact]
@@ -58,6 +60,7 @@ public class GameLauncherTests
         Assert.Equal(3, steps.Count);
         Assert.Contains("Multiplayer", steps[0]);
         Assert.Contains("TCP/IP", steps[1]);
+        Assert.Contains("Join", steps[1]);
         Assert.Contains("10.147.17.42", steps[2]);
     }
 
