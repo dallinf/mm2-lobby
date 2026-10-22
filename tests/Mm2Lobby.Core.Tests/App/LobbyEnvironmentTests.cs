@@ -6,6 +6,7 @@ using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
 using Mm2Lobby.Core.Preflight;
+using Mm2Lobby.Core.Processes;
 using Mm2Lobby.Core.Tests.Fakes;
 using Mm2Lobby.Windows.Checks;
 
@@ -38,6 +39,7 @@ public class LobbyEnvironmentTests : IDisposable
 
     private string? _chosenGamePath;
     private string? _registryGamePath;
+    private string? _accountId = "S-1-5-21-9999999999-8888888888-7777777777-1001";
 
     public void Dispose()
     {
@@ -93,6 +95,7 @@ public class LobbyEnvironmentTests : IDisposable
         Store,
         _zeroTier,
         _zeroTierCommand,
+        () => _accountId,
         _plainRunner,
         _elevatedRunner,
         () =>
@@ -268,6 +271,30 @@ public class LobbyEnvironmentTests : IDisposable
 
         Assert.Contains(TestFolder, first.FixDescription);
         Assert.Contains(TestFolder, second.FixDescription);
+    }
+
+    [Fact]
+    public async Task The_token_grant_runs_with_administrator_rights()
+    {
+        // A command with the rights of the player cannot change the
+        // permission of the token file. So the grant must take the elevated
+        // runner, and not the plain one.
+        var environment = Build();
+        _zeroTier.Status = null;
+        _plainRunner.Returns(
+            "zerotier-cli",
+            "-j info",
+            new ProcessResult(
+                ZeroTierFaultReader.TokenExitCode,
+                "authtoken.secret not found or readable (try again as root)",
+                ""));
+
+        await CheckNamed(environment, "ZeroTier").FixAsync(default);
+
+        var call = Assert.Single(_elevatedRunner.Calls);
+        Assert.StartsWith("icacls.exe ", call);
+        Assert.Contains("authtoken.secret", call);
+        Assert.Contains($"/grant *{_accountId}:(R)", call);
     }
 
     [Fact]

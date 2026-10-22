@@ -24,6 +24,7 @@ public sealed class ZeroTierCheck : ICheck
     private readonly IZeroTierClient _zeroTier;
     private readonly AppConfig _config;
     private readonly ZeroTierFaultReader _faults;
+    private readonly ZeroTierTokenGrant _grant;
 
     /// <param name="zeroTier">The client that reads ZeroTier.</param>
     /// <param name="config">The one configuration of the app.</param>
@@ -31,24 +32,48 @@ public sealed class ZeroTierCheck : ICheck
     /// Reads the reason of a failure. The client answers null for every
     /// failure, so the check needs this reader to name the right fix.
     /// </param>
+    /// <param name="grant">
+    /// Asks Windows to let this account read the token of ZeroTier. The Fix
+    /// uses it for the one failure that it can repair.
+    /// </param>
     public ZeroTierCheck(
-        IZeroTierClient zeroTier, AppConfig config, ZeroTierFaultReader faults)
+        IZeroTierClient zeroTier,
+        AppConfig config,
+        ZeroTierFaultReader faults,
+        ZeroTierTokenGrant grant)
     {
         _zeroTier = zeroTier;
         _config = config;
         _faults = faults;
+        _grant = grant;
     }
 
     public string Name => "ZeroTier";
 
     public async Task<CheckResult> RunAsync(CancellationToken ct)
+        => (await RunWithTheFaultAsync(ct)).Result;
+
+    /// <summary>
+    /// This method runs the check, and it also gives the reason of a failure.
+    /// FixAsync needs that reason, because it changes a permission for one
+    /// reason only.
+    /// </summary>
+    private async Task<(CheckResult Result, ZeroTierFault? Fault)> RunWithTheFaultAsync(
+        CancellationToken ct)
     {
         var status = await _zeroTier.GetStatusAsync(ct);
         if (status is null)
         {
-            return await DescribeTheFaultAsync(ct);
+            var fault = await _faults.ReadAsync(ct);
+            return (DescribeTheFault(fault), fault);
         }
 
+        return (await ReadTheNetworkAsync(status, ct), null);
+    }
+
+    private async Task<CheckResult> ReadTheNetworkAsync(
+        ZeroTierStatus status, CancellationToken ct)
+    {
         // The service answers, but it has no link to the ZeroTier servers.
         if (!status.ServiceOnline)
         {
@@ -85,7 +110,65 @@ public sealed class ZeroTierCheck : ICheck
             Name, CheckStatus.Pass, $"Connected as {network.Address}.", null);
     }
 
-    public Task<CheckResult> FixAsync(CancellationToken ct) => RunAsync(ct);
+    /// <summary>
+    /// The Fix repairs one failure: ZeroTier cannot read its own token. For
+    /// every other failure the Fix runs the check again, because the player
+    /// must do the work. The Fix reads the reason again, so it changes a
+    /// permission only while that reason holds.
+    /// </summary>
+    public async Task<CheckResult> FixAsync(CancellationToken ct)
+    {
+        var first = await RunWithTheFaultAsync(ct);
+        if (first.Fault != ZeroTierFault.PermissionDenied) return first.Result;
+
+        return await GrantTheReadPermissionAsync(ct);
+    }
+
+    /// <summary>
+    /// This method asks Windows to let this account read the token file. It
+    /// then runs the real command again. An exit code of 0 proves that icacls
+    /// ran, and it does not prove that ZeroTier answers now. The elevated
+    /// runner reads no output, so the exit code is all that Windows gives.
+    /// </summary>
+    private async Task<CheckResult> GrantTheReadPermissionAsync(CancellationToken ct)
+    {
+        var run = await _grant.RunAsync(ct);
+
+        if (run is null)
+        {
+            return Fail(
+                "The app cannot read the ID of your Windows account, "
+                    + "so it changed no permission.",
+                "Close this app. Then run MM2 Lobby as an administrator. "
+                    + "Then run the check again.");
+        }
+
+        if (!run.Result.Succeeded)
+        {
+            return Fail(
+                ElevatedCommand.FailureMessage(
+                    "Windows did not give this account the read permission",
+                    run.Result.ExitCode),
+                ElevatedCommand.ManualFix(run.Command));
+        }
+
+        var after = await RunWithTheFaultAsync(ct);
+        if (after.Result.Status == CheckStatus.Pass) return after.Result;
+
+        if (after.Fault == ZeroTierFault.PermissionDenied)
+        {
+            return Fail(
+                "Windows changed the permission of the token file, and "
+                    + "ZeroTier still refuses the command.",
+                "Close this app. Then run MM2 Lobby as an administrator. "
+                    + "Then run the check again. "
+                    + "If that works, tell the person who runs the group.");
+        }
+
+        // The token no longer blocks the app, and another cause took its
+        // place. The player reads the text of the new cause.
+        return after.Result;
+    }
 
     /// <summary>
     /// This method names the reason that ZeroTier gave no status, and the fix
@@ -93,24 +176,27 @@ public sealed class ZeroTierCheck : ICheck
     /// now, and Windows does not find that name. The app then told the player
     /// that the service was stopped, and the player looked for the wrong fix.
     /// </summary>
-    private async Task<CheckResult> DescribeTheFaultAsync(CancellationToken ct)
+    private CheckResult DescribeTheFault(ZeroTierFault fault)
     {
-        var fault = await _faults.ReadAsync(ct);
-
         return fault switch
         {
             ZeroTierFault.CommandNotFound => Fail(
                 "The app did not find the ZeroTier command on this computer.",
                 NotFoundFix()),
 
+            // This is the one Fix of the app that changes a permission, and it
+            // changes that permission on a secret. So the text says what the
+            // Fix will change before the player presses it.
             ZeroTierFault.PermissionDenied => Fail(
                 "ZeroTier refused the command. Only an administrator can read the "
                     + "ZeroTier authentication token on this computer.",
-                "Close this app. "
-                    + "Right-click MM2 Lobby and choose Run as administrator. "
-                    + "Then run the check again. "
-                    + "If you cannot be an administrator on this computer, "
-                    + "ask the owner of the computer for help."),
+                "Fix asks Windows to let this account read the token file of ZeroTier. "
+                    + "Windows asks you for permission one time. "
+                    + "The app gives the read permission to this account only, "
+                    + "and it changes nothing else on this computer. "
+                    + "The app does not read the token, and it does not copy the token. "
+                    + "If you would rather change no permission, close this app. "
+                    + "Then run MM2 Lobby as an administrator."),
 
             _ => Fail(
                 "The app reached the ZeroTier command, and ZeroTier gave no answer. "

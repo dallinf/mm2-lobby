@@ -1090,7 +1090,9 @@ public class LobbyViewModelTests : IDisposable
                 _environment.Config,
                 new ZeroTierFaultReader(
                     new FakeProcessRunner(),
-                    new ZeroTierCommand("zerotier-cli", Array.Empty<string>())))));
+                    new ZeroTierCommand("zerotier-cli", Array.Empty<string>())),
+                new ZeroTierTokenGrant(
+                    new FakeElevatedProcessRunner(), () => null, () => "shared"))));
 
         await using var model = Build();
         await model.StartAsync();
