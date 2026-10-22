@@ -1,0 +1,49 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe, not Exe. With Exe, Windows marks the program as a console
+         program and opens a black console window behind the lobby. On macOS
+         and on Linux this setting changes nothing. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+
+    <!-- The four settings below belong together, and the project holds all
+         four. IncludeNativeLibrariesForSelfExtract does nothing without
+         PublishSingleFile. While PublishSingleFile lived on the command line
+         only, a publish command that named the runtime and the self contained
+         switch, and left out the single file switch, put the three native
+         libraries of Avalonia beside the exe. The player who then copied the
+         exe alone saw the program fail to start.
+
+         The publish command needs no switch now:
+         dotnet publish src/Mm2Lobby.App -c Release -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <!-- The runtime belongs to a publish only. A RuntimeIdentifier in the group
+       above reaches every build through the project reference of the test
+       project, and then no test runs at all on macOS. -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mm2Lobby.Core\Mm2Lobby.Core.csproj" />
+    <ProjectReference Include="..\Mm2Lobby.Windows\Mm2Lobby.Windows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+  </ItemGroup>
+
+</Project>

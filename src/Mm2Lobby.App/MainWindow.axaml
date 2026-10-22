@@ -1,0 +1,133 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:app="using:Mm2Lobby.App"
+        x:Class="Mm2Lobby.App.MainWindow"
+        x:Name="Root"
+        x:DataType="app:LobbyViewModel"
+        Title="MM2 Lobby" Width="880" Height="760"
+        MinWidth="880" MinHeight="760"
+        Closing="OnWindowClosing">
+
+  <!-- The worst case for the layout is the Setup panel open with four rows
+       that report a problem. A measurement of that case gives the minimum
+       size below.
+
+       The list of peers holds the one star row, so it takes the height that
+       the other rows leave. At 880 by 760 the panel is 421 high and the list
+       row gets 177, which holds about six peers. At 720 the messages wrap
+       further, the panel grows to 519, and the list row falls to 79. So the
+       width matters as much as the height, and the window does not go below
+       880 by 760. -->
+
+  <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto">
+
+    <!-- The name editor. The limit comes from PeerTable. -->
+    <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,*" Margin="0,0,0,12">
+      <TextBlock Grid.Column="0" Text="Your name" VerticalAlignment="Center"
+                 FontWeight="Bold" Margin="0,0,8,0" />
+      <TextBox Grid.Column="1" x:Name="NameBox" Width="260" Margin="0,0,8,0"
+               MaxLength="{Binding DisplayNameMaxLength}"
+               Text="{Binding DisplayName, Mode=TwoWay,
+                              UpdateSourceTrigger=LostFocus}" />
+      <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="Gray"
+                 TextWrapping="Wrap"
+                 Text="Click outside the box. The others then see the new name after two seconds." />
+    </Grid>
+
+    <!-- The setup list. It opens while a check fails. -->
+    <Expander Grid.Row="1" Header="Setup" IsExpanded="{Binding SetupExpanded}"
+              HorizontalAlignment="Stretch" Margin="0,0,0,12">
+      <StackPanel Spacing="8">
+        <ItemsControl ItemsSource="{Binding CheckRows}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="app:CheckRow">
+              <Grid ColumnDefinitions="150,90,*,Auto" Margin="0,6">
+                <TextBlock Grid.Column="0" Text="{Binding Name}" FontWeight="Bold"
+                           TextWrapping="Wrap" VerticalAlignment="Top" />
+                <TextBlock Grid.Column="1" Text="{Binding Mark}" VerticalAlignment="Top" />
+                <StackPanel Grid.Column="2" Spacing="2">
+                  <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding Advice}" TextWrapping="Wrap" Foreground="Gray" />
+                </StackPanel>
+                <Button Grid.Column="3" Content="{Binding ActionLabel}"
+                        IsVisible="{Binding ShowAction}" Tag="{Binding Name}"
+                        IsEnabled="{Binding #Root.((app:LobbyViewModel)DataContext).CanAct}"
+                        Click="OnFixClick" Margin="8,0,0,0" Padding="12,4"
+                        VerticalAlignment="Top" />
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <Button Content="Check again" Click="OnCheckAgainClick"
+                IsEnabled="{Binding CanAct}"
+                HorizontalAlignment="Left" Padding="12,4" />
+      </StackPanel>
+    </Expander>
+
+    <!-- What the last fix reported. This sits outside the Expander above,
+         because that panel closes itself once every check passes, and the
+         firewall Repair runs only while they all do. -->
+    <TextBlock Grid.Row="2" Text="{Binding FixMessage}" TextWrapping="Wrap"
+               IsVisible="{Binding HasFixMessage}" FontWeight="Bold"
+               Margin="0,0,0,12" />
+
+    <!-- The lobby list. -->
+    <Grid Grid.Row="3" RowDefinitions="Auto,*">
+      <Grid Grid.Row="0" ColumnDefinitions="*,200,130,80,190" Margin="4,0,4,4">
+        <TextBlock Grid.Column="0" Text="Player" FontWeight="Bold" />
+        <TextBlock Grid.Column="1" Text="State" FontWeight="Bold" />
+        <TextBlock Grid.Column="2" Text="Address" FontWeight="Bold" />
+        <TextBlock Grid.Column="3" Text="Link" FontWeight="Bold" />
+        <TextBlock Grid.Column="4" Text="Warning" FontWeight="Bold" />
+      </Grid>
+
+      <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" CornerRadius="4">
+        <ScrollViewer>
+          <ItemsControl ItemsSource="{Binding PeerRows}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="app:PeerRow">
+                <Grid ColumnDefinitions="*,200,130,80,190" Margin="4,3">
+                  <TextBlock Grid.Column="0" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="1" Text="{Binding State}" TextWrapping="Wrap" />
+                  <TextBlock Grid.Column="2" Text="{Binding Address}" />
+                  <TextBlock Grid.Column="3" Text="{Binding Link}" />
+                  <TextBlock Grid.Column="4" Text="{Binding VersionNote}" TextWrapping="Wrap"
+                             IsVisible="{Binding VersionDiffers}" FontWeight="Bold" />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+
+    <!-- The host panel and the two buttons. -->
+    <StackPanel Grid.Row="4" Spacing="4" Margin="0,12,0,0">
+      <TextBlock Text="{Binding HostTitle}" FontWeight="Bold" />
+      <SelectableTextBlock Text="{Binding HostAddress}" FontSize="30" FontWeight="Bold"
+                           IsVisible="{Binding HasHostAddress}" />
+
+      <ItemsControl ItemsSource="{Binding JoinSteps}" Margin="0,0,0,4">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="x:String">
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,1" />
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap"
+                 IsVisible="{Binding HasStatusMessage}" Foreground="Gray" />
+      <TextBlock Text="{Binding FaultMessage}" TextWrapping="Wrap"
+                 IsVisible="{Binding HasFaultMessage}" FontWeight="Bold" />
+
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+        <Button Content="{Binding HostButtonText}" IsEnabled="{Binding CanHost}"
+                Click="OnHostClick" Padding="14,6" />
+        <Button Content="Join the host" IsEnabled="{Binding CanJoin}"
+                Click="OnJoinClick" Padding="14,6" />
+      </StackPanel>
+    </StackPanel>
+
+  </Grid>
+</Window>

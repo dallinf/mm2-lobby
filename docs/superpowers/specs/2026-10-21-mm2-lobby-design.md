@@ -126,15 +126,38 @@ peer discovery, not one class.
 - `Mm2Lobby.Core` targets `net10.0` and holds every piece of logic. It contains
   no WPF and no Windows-only API. It therefore builds and tests on macOS,
   which is where this project is being designed.
-- `Mm2Lobby.Windows` targets `net10.0-windows` and holds the registry, DISM,
-  firewall, and process code.
-- `Mm2Lobby.App` targets `net10.0-windows` and holds the WPF window.
+- `Mm2Lobby.Windows` targets `net10.0` and holds the registry, DISM, firewall,
+  and process code. It does **not** target `net10.0-windows`, which would make
+  it unbuildable on macOS for no gain: `Microsoft.Win32.Registry` compiles on
+  any target framework and throws only at run time off Windows. Every Windows
+  dependency here sits behind a seam — `IProcessRunner` for DISM and `netsh`,
+  `IZeroTierClient` for ZeroTier, an injectable file test for DirectPlay, and an
+  injectable registry read for the game path — so the four checks and their
+  behaviour test on macOS. Only `SystemProcessRunner`, `SystemProcessLauncher`
+  and the registry read itself cannot be verified there, and each is a few
+  lines.
+- `Mm2Lobby.App` targets `net10.0` and holds the window, built with **Avalonia**
+  rather than WPF.
 - `xunit` for tests. Every test lives in `Mm2Lobby.Core.Tests`, which targets
   `net10.0`.
 - Published as one self-contained executable. A friend downloads one file.
 
+**Why Avalonia and not WPF.** Revision 2 of this spec chose WPF. WPF cannot
+build on macOS at all, because its targeting pack is Windows-only — so the
+window, which is the largest and least testable part of the application, would
+have been written and shipped without anybody ever running it. Avalonia builds
+and runs on macOS and ships as an ordinary Windows application, which makes the
+riskiest piece of this project verifiable before it reaches a player.
+
+The cost is real and worth stating: Avalonia renders with its own engine, so the
+window will not look pixel-identical on Windows to the way it looks in
+development. A window that runs and looks slightly different beats a window
+nobody could run.
+
 Phase two must call the DirectPlay COM interfaces, and C# calls COM with the
-least work. That is why the stack is .NET rather than Go or Rust.
+least work. That is why the stack is .NET rather than Go or Rust. Phase two is
+therefore Windows-only and will need a `net10.0-windows` target of its own,
+confined to that one piece.
 
 ## 5. Components
 
@@ -240,6 +263,7 @@ player from the list.
 public sealed record Peer(
     string NodeId,
     string DisplayName,
+    string AppVersion,
     IPAddress? Address,
     bool IsOnline,
     bool AppRunning,
@@ -247,6 +271,12 @@ public sealed record Peer(
     DateTimeOffset? StartedAt,
     LinkQuality Link);
 ```
+
+`AppVersion` carries each peer's reported version, and it exists for one reason:
+section 7 requires the app to warn when two players run different versions.
+Revision 2 of this spec demanded that warning without giving `Peer` a field to
+carry it, so no task could have built it. A peer the app has never heard from
+carries the empty string, never null.
 
 A peer reaches the list by one of three routes, and the window must show all
 three differently:
@@ -271,6 +301,8 @@ public sealed class LobbyService : IAsyncDisposable
     public IReadOnlyList<Peer> Peers { get; }
     public bool IsHosting { get; }
     public Peer? CurrentHost { get; }
+    public string? MyAddress { get; }
+    public Exception? LastCycleFault { get; }
     public event Action<IReadOnlyList<Peer>>? PeersChanged;
 
     public Task StartAsync(CancellationToken ct);
@@ -280,10 +312,27 @@ public sealed class LobbyService : IAsyncDisposable
 }
 ```
 
+The constructor takes the window's `AppConfig` instance. The service does not
+load its own — see section 5.8 for why two copies corrupt the file.
+
 One cycle sends this app's announcement, then rebuilds the peer list, then
-raises `PeersChanged`. `StartAsync` runs `RunCycleAsync` every 2 seconds.
-Tests call `RunCycleAsync` directly, so no test waits on a timer. No other
-component holds a timer.
+raises `PeersChanged`, then saves any name it learned. `StartAsync` runs one
+cycle itself and then runs `RunCycleAsync` every 2 seconds. Tests call
+`RunCycleAsync` directly, so no test waits on a timer. No other component holds
+a timer.
+
+`CurrentHost` never returns this machine, because the peer list excludes it. The
+window shows your own hosting through `IsHosting` and `MyAddress`.
+
+`LastCycleFault` holds the exception from the most recent failed cycle, and a
+cycle that completes clears it. The app absorbs an exception at three places —
+the transport's subscriber, this service's event, and the pump — because a
+frozen list with no message is worse than a stale one, and `Mm2Lobby.Core` has
+no logger. Without this property no information about a failure would reach
+anybody, ever. The window shows it so a player can say what it said.
+
+`StartAsync` may be called once. On any failure the caller disposes the instance
+and constructs a new one.
 
 ### 5.6 PreflightCheck
 
@@ -353,7 +402,32 @@ One file at `%APPDATA%\Mm2Lobby\config.json`.
 }
 ```
 
-`displayName` defaults to the Windows computer name. The player can change it.
+`displayName` defaults to the Windows computer name.
+
+**The window owns the configuration object, and it is the only owner.** It loads
+one `AppConfig`, passes that instance to `LobbyService`, and hands the same
+instance to the preflight checks. The window is therefore where the player
+changes the display name: it sets the property, and the next cycle announces the
+new name.
+
+Revision 2 said only "The player can change it", which gave the requirement no
+owner, and it let `LobbyService` load a second copy of the configuration. Those
+two mistakes are the same mistake. With two copies, the sequence below destroys
+the player's game path on a two-second timer:
+
+1. The window builds `LobbyService`, whose copy holds an empty `gamePath`.
+2. The player uses the preflight fix to choose the game, which writes the path
+   to the file.
+3. A friend's name arrives, and the lobby saves its stale copy. The path is
+   gone.
+
+One object, one owner, passed in.
+
+A display name longer than 32 characters must never be announced: `PeerTable`
+rejects such an announcement, so the player would become invisible to every
+friend while their own list looked normal, because the app excludes itself from
+its own list. The window limits the text box, and `LobbyService` truncates
+before it announces.
 A missing or malformed file loads the defaults rather than failing.
 
 ## 6. Data flow
@@ -381,7 +455,8 @@ These are the failures the group will actually meet.
 | DirectPlay is turned off | `PreflightCheck` blocks and runs the `dism` command |
 | The firewall blocks the game | `PreflightCheck` adds the rule before the player ever starts MM2 |
 | The host's link is relayed, not direct | Show the link quality beside the host's name, the way GameRanger shows a ping estimate, so a player understands a slow race |
-| App versions disagree | The announcement carries `appVersion`. The app warns rather than behaving strangely |
+| App versions disagree | The announcement carries `appVersion`, `PeerTable` stores it, and `Peer.AppVersion` carries it to the window. **The window owns the warning** — it compares each peer's version against its own and marks any mismatch. Revision 2 demanded this warning without giving `Peer` a field to carry it, so no task could have built it |
+| A cycle fails for any reason | The pump absorbs it and the next tick tries again, so the list goes stale rather than frozen. `LobbyService.LastCycleFault` holds the exception and the window shows it, because otherwise no information about the failure reaches anybody |
 | A stray datagram arrives from the home network | `PeerTable` rejects it on the subnet test |
 | `zerotier-cli` is missing or its output changes | `ZeroTierClient` returns null or an empty result and the preflight screen explains it. The app never crashes on unexpected output |
 | Two players claim the host role | Both appear as hosting. The group sorts it out in Discord. The app does not arbitrate |
