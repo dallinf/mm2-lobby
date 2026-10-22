@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Mm2Lobby.Core\Mm2Lobby.Core.csproj" />
+    <ProjectReference Include="..\..\src\Mm2Lobby.Windows\Mm2Lobby.Windows.csproj" />
   </ItemGroup>
 
 </Project>
