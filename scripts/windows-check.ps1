@@ -74,18 +74,28 @@ function Add-Result {
 # Runs a program and never throws. It returns the exit code, the output, and
 # the error text. A missing program gives the code 9009, the code that cmd
 # reports for a command it cannot find.
+#
+# The function writes the command into a temporary .bat file and runs that
+# file. A command line that holds a quotation mark goes through three
+# programs, and each one reads the quotation marks again. The file carries
+# the command whole, so netsh reads the text that the app really sends.
 function Invoke-Probe {
     param(
         [string] $CommandLine,
         [int]    $TimeoutSeconds = 60
     )
 
-    $stdout = Join-Path $env:TEMP ("mm2-out-" + [guid]::NewGuid().ToString('N') + ".txt")
-    $stderr = Join-Path $env:TEMP ("mm2-err-" + [guid]::NewGuid().ToString('N') + ".txt")
+    $name    = [guid]::NewGuid().ToString('N')
+    $batFile = Join-Path $env:TEMP ("mm2-run-" + $name + ".bat")
+    $stdout  = Join-Path $env:TEMP ("mm2-out-" + $name + ".txt")
+    $stderr  = Join-Path $env:TEMP ("mm2-err-" + $name + ".txt")
 
     try {
+        Set-Content -LiteralPath $batFile -Encoding ASCII `
+            -Value ("@echo off`r`n" + $CommandLine)
+
         $process = Start-Process -FilePath $env:ComSpec `
-            -ArgumentList ('/c ' + $CommandLine) `
+            -ArgumentList '/c', $batFile `
             -NoNewWindow -PassThru `
             -RedirectStandardOutput $stdout `
             -RedirectStandardError $stderr
@@ -116,7 +126,7 @@ function Invoke-Probe {
         }
     }
     finally {
-        Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $batFile, $stdout, $stderr -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -280,8 +290,15 @@ else {
         }
     }
 
-    # The count comes from the summary line of the test runner.
-    $match = [regex]::Match(($test.Output -join "`n"), 'total:\s*(\d+)')
+    # The count comes from the summary line of the test runner. The test
+    # runner writes Total with a capital letter, and a .NET regex reads the
+    # letter case, so this match ignores the case on purpose. The second
+    # pattern covers a runner that reports only the passed tests.
+    $match = [regex]::Match($test.Output, 'total:\s*(\d+)', 'IgnoreCase')
+    if (-not $match.Success) {
+        $match = [regex]::Match($test.Output, 'passed:\s*(\d+)', 'IgnoreCase')
+    }
+
     if ($match.Success) {
         $count = [int] $match.Groups[1].Value
         if ($count -eq $ExpectedTests) {
@@ -386,10 +403,13 @@ Add-Line 'The command needs a token file. If only an administrator can read that
 Add-Line 'file, then every ZeroTier call in the app fails, and the app is unusable.'
 Add-Line ''
 
-$zeroTierExe = Join-Path ${env:ProgramFiles(x86)} 'ZeroTier\One\zerotier-cli.bat'
-$zeroTierAlt = Join-Path $env:ProgramFiles 'ZeroTier\One\zerotier-cli.bat'
+# A 32 bit Windows has no ProgramFiles(x86) folder, and Join-Path fails on an
+# empty folder name. The loop therefore skips a name that Windows does not set.
+$programFolders = @(${env:ProgramFiles(x86)}, $env:ProgramFiles) |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
-foreach ($path in @($zeroTierExe, $zeroTierAlt)) {
+foreach ($folder in $programFolders) {
+    $path = Join-Path $folder 'ZeroTier\One\zerotier-cli.bat'
     if (Test-Path -LiteralPath $path) {
         Add-Result 'INFO' ("A ZeroTier command file sits at {0}" -f $path)
     }
