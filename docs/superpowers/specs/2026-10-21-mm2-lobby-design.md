@@ -126,15 +126,38 @@ peer discovery, not one class.
 - `Mm2Lobby.Core` targets `net10.0` and holds every piece of logic. It contains
   no WPF and no Windows-only API. It therefore builds and tests on macOS,
   which is where this project is being designed.
-- `Mm2Lobby.Windows` targets `net10.0-windows` and holds the registry, DISM,
-  firewall, and process code.
-- `Mm2Lobby.App` targets `net10.0-windows` and holds the WPF window.
+- `Mm2Lobby.Windows` targets `net10.0` and holds the registry, DISM, firewall,
+  and process code. It does **not** target `net10.0-windows`, which would make
+  it unbuildable on macOS for no gain: `Microsoft.Win32.Registry` compiles on
+  any target framework and throws only at run time off Windows. Every Windows
+  dependency here sits behind a seam — `IProcessRunner` for DISM and `netsh`,
+  `IZeroTierClient` for ZeroTier, an injectable file test for DirectPlay, and an
+  injectable registry read for the game path — so the four checks and their
+  behaviour test on macOS. Only `SystemProcessRunner`, `SystemProcessLauncher`
+  and the registry read itself cannot be verified there, and each is a few
+  lines.
+- `Mm2Lobby.App` targets `net10.0` and holds the window, built with **Avalonia**
+  rather than WPF.
 - `xunit` for tests. Every test lives in `Mm2Lobby.Core.Tests`, which targets
   `net10.0`.
 - Published as one self-contained executable. A friend downloads one file.
 
+**Why Avalonia and not WPF.** Revision 2 of this spec chose WPF. WPF cannot
+build on macOS at all, because its targeting pack is Windows-only — so the
+window, which is the largest and least testable part of the application, would
+have been written and shipped without anybody ever running it. Avalonia builds
+and runs on macOS and ships as an ordinary Windows application, which makes the
+riskiest piece of this project verifiable before it reaches a player.
+
+The cost is real and worth stating: Avalonia renders with its own engine, so the
+window will not look pixel-identical on Windows to the way it looks in
+development. A window that runs and looks slightly different beats a window
+nobody could run.
+
 Phase two must call the DirectPlay COM interfaces, and C# calls COM with the
-least work. That is why the stack is .NET rather than Go or Rust.
+least work. That is why the stack is .NET rather than Go or Rust. Phase two is
+therefore Windows-only and will need a `net10.0-windows` target of its own,
+confined to that one piece.
 
 ## 5. Components
 
