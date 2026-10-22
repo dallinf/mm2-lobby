@@ -8,18 +8,20 @@
         MinWidth="720" MinHeight="520"
         Closing="OnWindowClosing">
 
-  <Grid Margin="16" RowDefinitions="Auto,Auto,*,Auto">
+  <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto">
 
     <!-- The name editor. The limit comes from PeerTable. -->
-    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
-      <TextBlock Text="Your name" VerticalAlignment="Center" FontWeight="Bold" />
-      <TextBox x:Name="NameBox" Width="260"
+    <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,*" Margin="0,0,0,12">
+      <TextBlock Grid.Column="0" Text="Your name" VerticalAlignment="Center"
+                 FontWeight="Bold" Margin="0,0,8,0" />
+      <TextBox Grid.Column="1" x:Name="NameBox" Width="260" Margin="0,0,8,0"
                MaxLength="{Binding DisplayNameMaxLength}"
                Text="{Binding DisplayName, Mode=TwoWay,
                               UpdateSourceTrigger=LostFocus}" />
-      <TextBlock VerticalAlignment="Center" Foreground="Gray" TextWrapping="Wrap"
+      <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="Gray"
+                 TextWrapping="Wrap"
                  Text="Click outside the box. The others then see the new name after two seconds." />
-    </StackPanel>
+    </Grid>
 
     <!-- The setup list. It opens while a check fails. -->
     <Expander Grid.Row="1" Header="Setup" IsExpanded="{Binding SetupExpanded}"
@@ -46,17 +48,21 @@
           </ItemsControl.ItemTemplate>
         </ItemsControl>
 
-        <TextBlock Text="{Binding FixMessage}" TextWrapping="Wrap"
-                   IsVisible="{Binding HasFixMessage}" FontWeight="Bold" />
-
         <Button Content="Check again" Click="OnCheckAgainClick"
                 IsEnabled="{Binding CanAct}"
                 HorizontalAlignment="Left" Padding="12,4" />
       </StackPanel>
     </Expander>
 
+    <!-- What the last fix reported. This sits outside the Expander above,
+         because that panel closes itself once every check passes, and the
+         firewall Repair runs only while they all do. -->
+    <TextBlock Grid.Row="2" Text="{Binding FixMessage}" TextWrapping="Wrap"
+               IsVisible="{Binding HasFixMessage}" FontWeight="Bold"
+               Margin="0,0,0,12" />
+
     <!-- The lobby list. -->
-    <Grid Grid.Row="2" RowDefinitions="Auto,*">
+    <Grid Grid.Row="3" RowDefinitions="Auto,*">
       <Grid Grid.Row="0" ColumnDefinitions="*,200,130,80,190" Margin="4,0,4,4">
         <TextBlock Grid.Column="0" Text="Player" FontWeight="Bold" />
         <TextBlock Grid.Column="1" Text="State" FontWeight="Bold" />
@@ -86,7 +92,7 @@
     </Grid>
 
     <!-- The host panel and the two buttons. -->
-    <StackPanel Grid.Row="3" Spacing="4" Margin="0,12,0,0">
+    <StackPanel Grid.Row="4" Spacing="4" Margin="0,12,0,0">
       <TextBlock Text="{Binding HostTitle}" FontWeight="Bold" />
       <SelectableTextBlock Text="{Binding HostAddress}" FontSize="30" FontWeight="Bold"
                            IsVisible="{Binding HasHostAddress}" />

@@ -201,17 +201,20 @@ public class ConfigStoreTests : IDisposable
     }
 
     [Fact]
-    public void A_save_that_fails_throws_and_leaves_the_target_as_it_was()
+    public void A_save_that_cannot_move_its_file_throws_and_keeps_no_temporary_file()
     {
         // GamePathCheck restores the old game path when the save throws, so
         // Save must report a failure rather than hide it. A folder at the
-        // target makes the move fail.
+        // target makes the move of the temporary file fail.
+        //
+        // The old values of the file are not in this test, because a folder
+        // sits where the old file would be. A_save_that_fails_keeps_every_
+        // value_of_the_old_file covers those values.
         Directory.CreateDirectory(Path_);
 
         Assert.ThrowsAny<IOException>(
             () => new ConfigStore(Path_).Save(new AppConfig { DisplayName = "dallin" }));
 
-        Assert.True(Directory.Exists(Path_));
         Assert.Empty(Directory.GetFiles(_folder, "*.tmp"));
     }
 
@@ -247,8 +250,19 @@ public class ConfigStoreTests : IDisposable
     public void A_save_that_fails_keeps_every_value_of_the_old_file()
     {
         // GamePathCheck puts back the old game path when Save throws, so the
-        // file must still hold what it held. A folder in place of the
-        // temporary file makes the next write fail.
+        // one file must still hold what it held. This test fails the save of
+        // that same file, and then reads that same file.
+        //
+        // A read-only folder makes the write of the temporary file fail. The
+        // name of that file holds a GUID, so a test cannot put anything in
+        // its way.
+        //
+        // File.SetUnixFileMode works on macOS and on Linux. This test does
+        // nothing on Windows, where no test of this branch runs today. A test
+        // that runs as the root user also reads and writes a read-only
+        // folder, and then this test proves nothing.
+        if (OperatingSystem.IsWindows()) return;
+
         var store = new ConfigStore(Path_);
         store.Save(new AppConfig
         {
@@ -258,10 +272,28 @@ public class ConfigStoreTests : IDisposable
             RememberedNames = { ["bb11223344"] = "chris" },
         });
 
-        Directory.CreateDirectory(Path.Combine(_folder, "wall"));
-        var blocked = new ConfigStore(Path.Combine(_folder, "wall"));
+        var mode = File.GetUnixFileMode(_folder);
+        File.SetUnixFileMode(
+            _folder, UnixFileMode.UserRead | UnixFileMode.UserExecute);
 
-        Assert.ThrowsAny<IOException>(() => blocked.Save(new AppConfig { DisplayName = "lost" }));
+        Exception? thrown;
+        try
+        {
+            thrown = Record.Exception(
+                () => store.Save(new AppConfig { DisplayName = "lost" }));
+        }
+        finally
+        {
+            File.SetUnixFileMode(_folder, mode);
+        }
+
+        // GamePathCheck and LobbyService.RememberNames each catch IOException
+        // and UnauthorizedAccessException. A third type would leave both of
+        // them.
+        Assert.NotNull(thrown);
+        Assert.True(
+            thrown is IOException or UnauthorizedAccessException,
+            $"Save threw {thrown.GetType().Name}, which no caller catches.");
 
         var kept = store.Load();
         Assert.Equal("dallin", kept.DisplayName);

@@ -18,7 +18,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private const string HostLabel = "Host a race";
     private const string StopLabel = "Stop the race";
     private const string NoHostTitle = "No one hosts a race now.";
-    private const string WorkingMessage = "The app is at work. Please wait.";
+    private const string WorkingMessage = "The app is busy. Please wait.";
 
     private static readonly string[] NoSteps = Array.Empty<string>();
 
@@ -151,19 +151,6 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
             if (!Set(ref _busy, value)) return;
 
             OnPropertyChanged(nameof(CanAct));
-
-            // A button that the window disables tells the player nothing about
-            // the reason. dism takes tens of seconds, and the row still reads
-            // Problem for all of that time.
-            if (value)
-            {
-                StatusMessage = WorkingMessage;
-            }
-            else if (_statusMessage == WorkingMessage)
-            {
-                StatusMessage = string.Empty;
-            }
-
             UpdateTheButtons();
         }
     }
@@ -251,7 +238,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         var entry = _checks.FirstOrDefault(item => item.Check.Name == checkName);
         if (entry is null) return;
 
-        Busy = true;
+        StartTheWork();
         FixMessage = string.Empty;
 
         try
@@ -270,7 +257,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
-            Busy = false;
+            EndTheWork();
             return;
         }
         catch (Exception e)
@@ -360,7 +347,8 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
             HostAddress = lobby.MyAddress ?? string.Empty;
             HostTitle = HostAddress.Length > 0
                 ? "You host this race. Give the address to the others."
-                : "You host this race. The app does not have your address yet.";
+                : "You host this race. The app does not have your address yet. "
+                    + "Wait a moment.";
 
             ShowTheSteps(JoinInstructions.ForHost());
         }
@@ -378,7 +366,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         FaultMessage = lobby?.LastCycleFault is { } fault
-            ? $"The last cycle failed: {fault.Message}"
+            ? $"The last refresh failed: {fault.Message}"
             : string.Empty;
 
         UpdateTheButtons();
@@ -408,10 +396,14 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         // Check again that works still shows "The lobby did not start".
         StatusMessage = string.Empty;
 
-        // Busy goes true before the first await. StopTheLobbyAsync waits for
+        // The work starts before the first await. StopTheLobbyAsync waits for
         // the old service, and a second click in that gap would start another
         // run: two services, and a timer that no field holds any more.
-        Busy = true;
+        //
+        // A fix calls this method, and the fix already turned the buttons
+        // off. The message still has to go back, because the line above took
+        // it away and the checks below run netsh and zerotier-cli.
+        StartTheWork();
 
         try
         {
@@ -454,9 +446,9 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
         finally
         {
-            // Busy covers the whole run, not only the checks. The buttons
-            // therefore stay off while the service starts.
-            Busy = false;
+            // The work covers the whole run, not only the checks. The
+            // buttons therefore stay off while the service starts.
+            EndTheWork();
             UpdateTheButtons();
         }
     }
@@ -602,6 +594,28 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         field = value;
         OnPropertyChanged(name);
         return true;
+    }
+
+    /// <summary>
+    /// Turns the buttons off and says why. A button that the window disables
+    /// tells the player nothing about the reason, and dism takes tens of
+    /// seconds. This method writes the message every time, because a fix and
+    /// the start that follows it both call it and Busy is already true for
+    /// the second call.
+    /// </summary>
+    private void StartTheWork()
+    {
+        Busy = true;
+        StatusMessage = WorkingMessage;
+    }
+
+    private void EndTheWork()
+    {
+        Busy = false;
+
+        // Another message can have taken the place of this one, for example
+        // the message about MM2. Only this one belongs to the work.
+        if (_statusMessage == WorkingMessage) StatusMessage = string.Empty;
     }
 
     private void OnPropertyChanged([CallerMemberName] string? name = null)

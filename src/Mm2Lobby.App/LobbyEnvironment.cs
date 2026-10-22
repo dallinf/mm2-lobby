@@ -27,9 +27,10 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
         "A rule can still name an old game folder, and the check cannot see that. "
         + "If you moved Midtown Madness 2, or installed it again, choose Repair. "
         + "If every check passes and MM2 still finds no host, open Windows "
-        + "Defender Firewall and look for a Block rule for midtown2.exe. "
-        + "A Block rule wins over the allow rules of this app, and this check "
-        + "cannot see it.";
+        + "Defender Firewall and look at the rules for midtown2.exe. "
+        + "A Block rule wins over the allow rules of this app. "
+        + "An MM2 Lobby rule that you turned off also blocks the game. "
+        + "The check reads the name of a rule only, so it sees neither case.";
 
     private readonly ConfigStore _configStore;
     private readonly IZeroTierClient _zeroTier;

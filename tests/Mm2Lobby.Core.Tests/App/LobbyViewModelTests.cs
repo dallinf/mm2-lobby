@@ -246,6 +246,29 @@ public class LobbyViewModelTests : IDisposable
         Assert.Equal(string.Empty, model.HostAddress);
         Assert.DoesNotContain("Give the address", model.HostTitle);
         Assert.Contains("You host this race", model.HostTitle);
+
+        // A cycle fills the address in. The player must know that waiting is
+        // the whole of the work.
+        Assert.Contains("Wait", model.HostTitle);
+    }
+
+    [Fact]
+    public async Task A_repair_that_works_closes_the_setup_list_and_keeps_its_report()
+    {
+        // The firewall Repair is offered only while every check passes, so
+        // the checks pass again after it and the setup list closes itself.
+        // The window must therefore show FixMessage outside that list.
+        var check = new FakeCheck("Windows Firewall");
+        _environment.Checks.Add(new CheckEntry(check, "The rule can name an old game folder."));
+        check.OnFix = () => check.Message = "Windows accepted the commands.";
+
+        await using var model = Build();
+        await model.StartAsync();
+        await model.FixAsync("Windows Firewall");
+
+        Assert.False(model.SetupExpanded);
+        Assert.True(model.HasFixMessage);
+        Assert.Contains("Windows accepted the commands", model.FixMessage);
     }
 
     [Fact]
@@ -428,7 +451,27 @@ public class LobbyViewModelTests : IDisposable
         await model.FixAsync("DirectPlay");
 
         Assert.NotNull(duringTheFix);
-        Assert.Contains("at work", duringTheFix);
+        Assert.Contains("busy", duringTheFix);
+        Assert.Equal(string.Empty, model.StatusMessage);
+    }
+
+    [Fact]
+    public async Task The_window_stays_busy_through_the_checks_that_follow_a_fix()
+    {
+        // A fix ends, and then the window runs every check again, which runs
+        // netsh and zerotier-cli. The buttons are off for all of that time,
+        // so the window must still say why.
+        var seen = new List<string>();
+        var check = AddCheck("DirectPlay", CheckStatus.Fail);
+
+        await using var model = Build();
+        check.OnRun = () => seen.Add(model.StatusMessage);
+
+        await model.StartAsync();
+        await model.FixAsync("DirectPlay");
+
+        // The last run of the check is the one that follows the fix.
+        Assert.Contains("busy", seen[^1]);
         Assert.Equal(string.Empty, model.StatusMessage);
     }
 
@@ -848,6 +891,10 @@ public class LobbyViewModelTests : IDisposable
 
         Assert.Contains("zerotier-cli is gone", model.FaultMessage);
         Assert.True(model.HasFaultMessage);
+
+        // A friend reads this line and repeats it. "Refresh" is the word that
+        // a friend knows. "Cycle" is the word of the code.
+        Assert.Contains("refresh", model.FaultMessage);
     }
 
     // --- The close ---------------------------------------------------------

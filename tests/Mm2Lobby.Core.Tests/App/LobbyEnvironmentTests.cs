@@ -213,19 +213,24 @@ public class LobbyEnvironmentTests : IDisposable
     }
 
     [Fact]
-    public void The_firewall_hint_names_the_Block_rule()
+    public void The_firewall_hint_names_both_rules_that_the_check_cannot_see()
     {
         // Every row reads OK and MM2 still finds no host: that is the one
         // state the checks cannot see, and the state that spec section 5.6
-        // calls the worst. A Block rule wins over the allow rules of this app.
-        // Without this sentence the player has nothing to read and nothing to
-        // report.
+        // calls the worst. Without these sentences the player has nothing to
+        // read and nothing to report.
+        //
+        // The check matches on the name of a rule only. So a Block rule for
+        // the game defeats it, and an MM2 Lobby rule that the player turned
+        // off defeats it too. The Repair does not turn such a rule on again,
+        // because the add command does not send enable=yes.
         var entry = Build().CreateChecks()
             .Single(item => item.Check.Name == "Windows Firewall");
 
         Assert.NotNull(entry.RepairHint);
-        Assert.Contains("Block rule", entry.RepairHint);
         Assert.Contains("midtown2.exe", entry.RepairHint);
+        Assert.Contains("Block rule", entry.RepairHint);
+        Assert.Contains("turned off", entry.RepairHint);
     }
 
     [Fact]
