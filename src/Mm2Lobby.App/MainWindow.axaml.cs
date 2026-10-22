@@ -29,6 +29,16 @@ public sealed partial class MainWindow : Window
 
     private void OnHostClick(object? sender, RoutedEventArgs e) => Model?.Host();
 
+    /// <summary>
+    /// Gives the text of the name box to the view model. The binding writes
+    /// the name when the box loses the focus, and a player who types a name
+    /// and then closes the window never gives it that focus.
+    /// </summary>
+    private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (Model is { } model) model.DisplayName = NameBox.Text ?? string.Empty;
+    }
+
     private async void OnJoinClick(object? sender, RoutedEventArgs e)
     {
         if (Model is { } model) await model.JoinAsync();

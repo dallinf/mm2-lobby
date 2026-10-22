@@ -213,6 +213,22 @@ public class LobbyEnvironmentTests : IDisposable
     }
 
     [Fact]
+    public void The_firewall_hint_names_the_Block_rule()
+    {
+        // Every row reads OK and MM2 still finds no host: that is the one
+        // state the checks cannot see, and the state that spec section 5.6
+        // calls the worst. A Block rule wins over the allow rules of this app.
+        // Without this sentence the player has nothing to read and nothing to
+        // report.
+        var entry = Build().CreateChecks()
+            .Single(item => item.Check.Name == "Windows Firewall");
+
+        Assert.NotNull(entry.RepairHint);
+        Assert.Contains("Block rule", entry.RepairHint);
+        Assert.Contains("midtown2.exe", entry.RepairHint);
+    }
+
+    [Fact]
     public void No_other_check_offers_a_repair_while_it_passes()
     {
         var others = Build().CreateChecks()

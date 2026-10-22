@@ -12,17 +12,24 @@ namespace Mm2Lobby.App;
 
 /// <summary>
 /// This class builds every component of the app. It loads the configuration
-/// one time, in the constructor, and it gives that one object to every check
-/// and to every lobby service. A second load would discard a value that
-/// another component wrote. The three steps below destroy the game path:
-/// the player chooses the game with the preflight fix, a friend sends a name
-/// two seconds later, and the lobby saves its own stale copy.
+/// one time, in the constructor. It gives that one object to every check and
+/// to every lobby service. A second load would discard a value that another
+/// component wrote.
 /// </summary>
+/// <remarks>
+/// These three steps destroy the game path when two copies exist. First the
+/// player chooses the game with the preflight fix. Then a friend sends a name
+/// two seconds later. Then the lobby saves its own stale copy.
+/// </remarks>
 public sealed class LobbyEnvironment : ILobbyEnvironment
 {
     private const string FirewallRepairHint =
         "A rule can still name an old game folder, and the check cannot see that. "
-        + "If you moved Midtown Madness 2, or installed it again, choose Repair.";
+        + "If you moved Midtown Madness 2, or installed it again, choose Repair. "
+        + "If every check passes and MM2 still finds no host, open Windows "
+        + "Defender Firewall and look for a Block rule for midtown2.exe. "
+        + "A Block rule wins over the allow rules of this app, and this check "
+        + "cannot see it.";
 
     private readonly ConfigStore _configStore;
     private readonly IZeroTierClient _zeroTier;

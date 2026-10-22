@@ -18,6 +18,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private const string HostLabel = "Host a race";
     private const string StopLabel = "Stop the race";
     private const string NoHostTitle = "No one hosts a race now.";
+    private const string WorkingMessage = "The app is at work. Please wait.";
 
     private static readonly string[] NoSteps = Array.Empty<string>();
 
@@ -36,6 +37,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private string _hostAddress = string.Empty;
     private string _hostButtonText = HostLabel;
     private string _statusMessage = string.Empty;
+    private string _fixMessage = string.Empty;
     private string _faultMessage = string.Empty;
     private bool _setupExpanded = true;
     private bool _canHost;
@@ -88,11 +90,16 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     /// </summary>
     public int DisplayNameMaxLength => PeerTable.MaxPlayerNameLength;
 
-    /// <summary>True while the setup list is open.</summary>
+    /// <summary>
+    /// True while the setup list is open. The setter is public because
+    /// Expander.IsExpanded binds both ways. A private setter would refuse the
+    /// write of the player who closes the panel, and the panel could then
+    /// snap shut and hide the Repair button of the firewall row.
+    /// </summary>
     public bool SetupExpanded
     {
         get => _setupExpanded;
-        private set => Set(ref _setupExpanded, value);
+        set => Set(ref _setupExpanded, value);
     }
 
     public string HostTitle
@@ -131,7 +138,11 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         private set => Set(ref _canJoin, value);
     }
 
-    /// <summary>True while a check or a fix runs. The window then disables every button.</summary>
+    /// <summary>
+    /// True while a check or a fix runs. Every button that starts work reads
+    /// CanAct, so the window disables each of them while this property is
+    /// true.
+    /// </summary>
     public bool Busy
     {
         get => _busy;
@@ -139,12 +150,29 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             if (!Set(ref _busy, value)) return;
 
-            OnPropertyChanged(nameof(CanCheckAgain));
+            OnPropertyChanged(nameof(CanAct));
+
+            // A button that the window disables tells the player nothing about
+            // the reason. dism takes tens of seconds, and the row still reads
+            // Problem for all of that time.
+            if (value)
+            {
+                StatusMessage = WorkingMessage;
+            }
+            else if (_statusMessage == WorkingMessage)
+            {
+                StatusMessage = string.Empty;
+            }
+
             UpdateTheButtons();
         }
     }
 
-    public bool CanCheckAgain => !_busy;
+    /// <summary>
+    /// True while the window accepts Check again, Fix and Repair. Each of
+    /// those buttons starts the same work, so one property covers them.
+    /// </summary>
+    public bool CanAct => !_busy;
 
     /// <summary>The last message about a start, a fix, or the game.</summary>
     public string StatusMessage
@@ -157,6 +185,23 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     }
 
     public bool HasStatusMessage => _statusMessage.Length > 0;
+
+    /// <summary>
+    /// What the last fix reported. The checks run again after a fix, and the
+    /// rows then hold the text of RunAsync, so without this property the
+    /// message of FixAsync reaches nobody. The player reads here that netsh
+    /// refused the rule, or that Windows needs a restart.
+    /// </summary>
+    public string FixMessage
+    {
+        get => _fixMessage;
+        private set
+        {
+            if (Set(ref _fixMessage, value)) OnPropertyChanged(nameof(HasFixMessage));
+        }
+    }
+
+    public bool HasFixMessage => _fixMessage.Length > 0;
 
     /// <summary>
     /// The exception from the last failed cycle. Mm2Lobby.Core has no logger,
@@ -174,14 +219,25 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool HasFaultMessage => _faultMessage.Length > 0;
 
     /// <summary>Runs the checks and starts the lobby. The window calls this method once.</summary>
-    public Task StartAsync() => StartTheLobbyAsync();
+    public Task StartAsync() => StartFromAButtonAsync();
 
     /// <summary>
     /// Runs the checks again and starts a new lobby service. This method
     /// disposes the old service first, because LobbyService.StartAsync accepts
     /// one call only.
     /// </summary>
-    public Task CheckAgainAsync() => StartTheLobbyAsync();
+    public Task CheckAgainAsync() => StartFromAButtonAsync();
+
+    /// <summary>
+    /// Starts the lobby for the player. FixAsync does not come here, because
+    /// FixAsync writes FixMessage and the player must still read it after the
+    /// checks run again.
+    /// </summary>
+    private Task StartFromAButtonAsync()
+    {
+        FixMessage = string.Empty;
+        return StartTheLobbyAsync();
+    }
 
     /// <summary>
     /// Runs the fix of one check, then runs every check again and starts a new
@@ -196,27 +252,42 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         if (entry is null) return;
 
         Busy = true;
+        FixMessage = string.Empty;
+
         try
         {
             // The fix runs on a thread from the pool. A file picker and an
             // elevated process each block the thread that calls them, and the
             // user interface thread must stay free.
-            await Task.Run(() => entry.Check.FixAsync(_shutdown.Token), _shutdown.Token);
+            var result = await Task.Run(
+                () => entry.Check.FixAsync(_shutdown.Token), _shutdown.Token);
+
+            // The checks run again below, and the rows then hold the text of
+            // RunAsync. So the window keeps the text of the fix here. Only
+            // this text names the exit code of netsh, or the restart that
+            // DISM needs.
+            ShowTheFixResult(result);
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
+            Busy = false;
             return;
         }
         catch (Exception e)
         {
-            StatusMessage = $"The fix for {checkName} did not finish: {e.Message}";
-        }
-        finally
-        {
-            Busy = false;
+            FixMessage = $"The fix for {checkName} did not finish: {e.Message}";
         }
 
+        // Busy stays true. StartTheLobbyAsync sets it again, and the gap
+        // between the two would let a second click start another run.
         await StartTheLobbyAsync();
+    }
+
+    private void ShowTheFixResult(CheckResult result)
+    {
+        FixMessage = string.IsNullOrWhiteSpace(result.FixDescription)
+            ? $"{result.Name}: {result.Message}"
+            : $"{result.Name}: {result.Message} {result.FixDescription}";
     }
 
     /// <summary>
@@ -282,8 +353,15 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             // CurrentHost never returns this machine. So the window reads
             // IsHosting and MyAddress to show the race of this player.
-            HostTitle = "You host this race. Give the address to the others.";
+            //
+            // MyAddress is null until a cycle reads the ZeroTier network. The
+            // window must not ask the player for an address that the window
+            // does not show.
             HostAddress = lobby.MyAddress ?? string.Empty;
+            HostTitle = HostAddress.Length > 0
+                ? "You host this race. Give the address to the others."
+                : "You host this race. The app does not have your address yet.";
+
             ShowTheSteps(JoinInstructions.ForHost());
         }
         else if (host?.Address is not null)
@@ -300,7 +378,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         FaultMessage = lobby?.LastCycleFault is { } fault
-            ? $"The last refresh failed: {fault.Message}"
+            ? $"The last cycle failed: {fault.Message}"
             : string.Empty;
 
         UpdateTheButtons();
@@ -326,46 +404,61 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         if (_disposed) return;
 
-        await StopTheLobbyAsync();
-        await RunTheChecksAsync();
+        // The old message belongs to the attempt that ended. Without this, a
+        // Check again that works still shows "The lobby did not start".
+        StatusMessage = string.Empty;
 
-        if (!_preflightPassed || _disposed)
-        {
-            UpdateTheButtons();
-            return;
-        }
-
-        var lobby = _environment.CreateLobby();
-        lobby.PeersChanged += OnPeersChanged;
-
-        // The first cycle runs inside StartAsync and raises PeersChanged. The
-        // field must already hold the service, because the subscriber reads it.
-        _lobby = lobby;
+        // Busy goes true before the first await. StopTheLobbyAsync waits for
+        // the old service, and a second click in that gap would start another
+        // run: two services, and a timer that no field holds any more.
+        Busy = true;
 
         try
         {
-            await lobby.StartAsync(_shutdown.Token);
-        }
-        catch (Exception e)
-        {
-            // A failed start leaves the service unusable, and StartAsync
-            // accepts one call. So the window drops this instance. The Check
-            // again button builds another one.
-            _lobby = null;
-            lobby.PeersChanged -= OnPeersChanged;
-            await lobby.DisposeAsync();
+            await StopTheLobbyAsync();
+            await RunTheChecksAsync();
 
-            if (!_shutdown.IsCancellationRequested)
+            if (!_preflightPassed || _disposed) return;
+
+            var lobby = _environment.CreateLobby();
+            lobby.PeersChanged += OnPeersChanged;
+
+            // The first cycle runs inside StartAsync and raises PeersChanged.
+            // The field must already hold the service, because the subscriber
+            // reads it.
+            _lobby = lobby;
+
+            try
             {
-                StatusMessage = $"The lobby did not start: {e.Message}";
+                await lobby.StartAsync(_shutdown.Token);
+            }
+            catch (Exception e)
+            {
+                // A failed start leaves the service unusable, and StartAsync
+                // accepts one call. So the window drops this instance. The
+                // Check again button builds another one.
+                _lobby = null;
+                lobby.PeersChanged -= OnPeersChanged;
+                await lobby.DisposeAsync();
+
+                if (!_shutdown.IsCancellationRequested)
+                {
+                    StatusMessage = $"The lobby did not start: {e.Message}";
+                }
+
+                return;
             }
 
-            UpdateTheButtons();
-            return;
+            _poll = _host.Repeat(LobbyService.CyclePeriod, RefreshStatus);
+            RefreshStatus();
         }
-
-        _poll = _host.Repeat(LobbyService.CyclePeriod, RefreshStatus);
-        RefreshStatus();
+        finally
+        {
+            // Busy covers the whole run, not only the checks. The buttons
+            // therefore stay off while the service starts.
+            Busy = false;
+            UpdateTheButtons();
+        }
     }
 
     private async Task StopTheLobbyAsync()
@@ -383,9 +476,12 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         await lobby.DisposeAsync();
     }
 
+    /// <summary>
+    /// Runs every check. The caller owns Busy, because the caller also starts
+    /// the lobby service and the buttons must stay off for the whole run.
+    /// </summary>
     private async Task RunTheChecksAsync()
     {
-        Busy = true;
         try
         {
             var runner = new PreflightRunner(
@@ -400,10 +496,6 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
             _preflightPassed = false;
-        }
-        finally
-        {
-            Busy = false;
         }
     }
 
@@ -435,8 +527,9 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private void ShowTheSteps(IReadOnlyList<string> steps)
     {
-        // The window reads the state once every cycle. Without this test, the
-        // list would rebuild every two seconds and the text would flicker.
+        // The window reads the state once every cycle. Without this
+        // comparison, the list would rebuild every two seconds and the text
+        // would flicker.
         if (JoinSteps.SequenceEqual(steps)) return;
 
         JoinSteps.Clear();

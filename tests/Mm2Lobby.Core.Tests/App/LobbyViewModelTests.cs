@@ -223,6 +223,46 @@ public class LobbyViewModelTests : IDisposable
 
         Assert.Equal(2, _environment.CreateLobbyCount);
         Assert.True(model.CanHost);
+
+        // The message belongs to the attempt that ended. A running lobby and
+        // "The lobby did not start" on the screen at once tell the player two
+        // different things.
+        Assert.Equal(string.Empty, model.StatusMessage);
+        Assert.False(model.HasStatusMessage);
+    }
+
+    [Fact]
+    public async Task The_window_does_not_ask_for_an_address_that_it_lacks()
+    {
+        // MyAddress is null until a cycle reads the ZeroTier network.
+        AddCheck("ZeroTier");
+        ((FakeZeroTierClient)_environment.ZeroTier).Network = null;
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.Host();
+
+        Assert.Equal(string.Empty, model.HostAddress);
+        Assert.DoesNotContain("Give the address", model.HostTitle);
+        Assert.Contains("You host this race", model.HostTitle);
+    }
+
+    [Fact]
+    public async Task The_player_can_close_the_setup_list()
+    {
+        // Expander.IsExpanded binds both ways. A setter that refuses the write
+        // would leave the panel and the view model with different answers.
+        AddCheck("ZeroTier", CheckStatus.Fail);
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.True(model.SetupExpanded);
+
+        model.SetupExpanded = false;
+
+        Assert.False(model.SetupExpanded);
     }
 
     // --- Check again -------------------------------------------------------
@@ -310,7 +350,86 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
         await model.FixAsync("ZeroTier");
 
-        Assert.Contains("the disk is full", model.StatusMessage);
+        Assert.Contains("the disk is full", model.FixMessage);
+        Assert.True(model.HasFixMessage);
+    }
+
+    [Fact]
+    public async Task The_window_shows_what_the_fix_reported()
+    {
+        // The checks run again after a fix, and the rows then hold the text of
+        // RunAsync. Only this message names the exit code of netsh, or the
+        // restart that DISM needs.
+        var check = AddCheck("Windows Firewall", CheckStatus.Fail);
+        check.OnFix = () =>
+        {
+            check.Message = "netsh did not add the inbound rule (exit code 127).";
+            check.FixDescription = "Open an administrator command prompt and run netsh.";
+        };
+
+        await using var model = Build();
+        await model.StartAsync();
+        await model.FixAsync("Windows Firewall");
+
+        Assert.Contains("exit code 127", model.FixMessage);
+        Assert.Contains("administrator command prompt", model.FixMessage);
+    }
+
+    [Fact]
+    public async Task Check_again_clears_what_the_last_fix_reported()
+    {
+        var check = AddCheck("Windows Firewall", CheckStatus.Fail);
+        check.OnFix = () => check.Message = "netsh did not add the inbound rule.";
+
+        await using var model = Build();
+        await model.StartAsync();
+        await model.FixAsync("Windows Firewall");
+
+        Assert.True(model.HasFixMessage);
+
+        await model.CheckAgainAsync();
+
+        Assert.Equal(string.Empty, model.FixMessage);
+        Assert.False(model.HasFixMessage);
+    }
+
+    [Fact]
+    public async Task A_fix_keeps_the_buttons_off_until_the_lobby_starts()
+    {
+        // Busy stays true from the start of the fix to the end of the start.
+        // A gap would let a second click run two lobby services at once.
+        var seen = new List<bool>();
+        var check = AddCheck("ZeroTier", CheckStatus.Fail);
+        check.OnFix = () => check.Status = CheckStatus.Pass;
+
+        await using var model = Build();
+        check.OnRun = () => seen.Add(model.CanAct);
+
+        await model.StartAsync();
+        await model.FixAsync("ZeroTier");
+
+        Assert.NotEmpty(seen);
+        Assert.All(seen, canAct => Assert.False(canAct));
+        Assert.True(model.CanAct);
+    }
+
+    [Fact]
+    public async Task The_window_says_that_it_is_at_work()
+    {
+        // dism takes tens of seconds. A button that the window disables tells
+        // the player nothing about the reason.
+        string? duringTheFix = null;
+        var check = AddCheck("DirectPlay", CheckStatus.Fail);
+
+        await using var model = Build();
+        check.OnFix = () => duringTheFix = model.StatusMessage;
+
+        await model.StartAsync();
+        await model.FixAsync("DirectPlay");
+
+        Assert.NotNull(duringTheFix);
+        Assert.Contains("at work", duringTheFix);
+        Assert.Equal(string.Empty, model.StatusMessage);
     }
 
     [Fact]
