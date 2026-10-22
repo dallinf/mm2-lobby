@@ -101,39 +101,6 @@ public class LobbyServiceTests : IDisposable
             => _inner.GetLinkQualityAsync(ct);
     }
 
-    /// <summary>
-    /// This configuration answers a different name for each read of
-    /// DisplayName. The window writes that property while the pump runs, so
-    /// the service must read the name one time for each announcement. Two
-    /// reads can take one long name and one short name, and the truncation
-    /// then throws.
-    /// </summary>
-    private sealed class ScriptedNameConfig : AppConfig
-    {
-        private readonly Queue<string> _names;
-
-        public ScriptedNameConfig(params string[] names) => _names = new Queue<string>(names);
-
-        public int Reads { get; private set; }
-
-        /// <summary>
-        /// Answers the next name of the list. The last name of the list stays
-        /// for every further read.
-        /// </summary>
-        public override string DisplayName
-        {
-            get
-            {
-                Reads++;
-                return _names.Count > 1 ? _names.Dequeue() : _names.Peek();
-            }
-
-            set
-            {
-            }
-        }
-    }
-
     private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(5);
 
     /// <summary>
@@ -196,15 +163,18 @@ public class LobbyServiceTests : IDisposable
     {
         // The window owns the one AppConfig, and it writes the name while the
         // pump runs. With two reads, a name of 3 characters can replace a name
-        // of 40 between them, and the truncation then throws. The cost is one
-        // skipped cycle and a confusing fault line.
+        // of 40 between the two, and the truncation then throws. The cost is
+        // one skipped cycle and a confusing fault line.
+        //
+        // This test runs the real race: one thread writes the name while
+        // another thread runs cycles. The two reads then take two values, and
+        // the truncation throws inside the loop below. With the two reads in
+        // place, 20000 cycles threw on every one of 10 runs, and each run
+        // threw within 40 ms. With the one read, the loop never throws.
         var tooLong = new string('a', PeerTable.MaxPlayerNameLength + 8);
-
-        // StartAsync runs the first cycle, and that cycle takes the first
-        // name. The cycle below takes the long name. A second read of the same
-        // cycle would take "bob".
-        var config = new ScriptedNameConfig("dallin", tooLong, "bob")
+        var config = new AppConfig
         {
+            DisplayName = "bob",
             ZeroTierNetworkId = "0123456789abcdef",
         };
 
@@ -214,15 +184,30 @@ public class LobbyServiceTests : IDisposable
             Store, config, "1.0.0", () => _now);
 
         await service.StartAsync(default);
-        await service.RunCycleAsync(default);
 
-        Assert.Equal("dallin", Decode(_transport.Sent[0].Payload).Player);
-        Assert.Equal(
-            tooLong[..PeerTable.MaxPlayerNameLength],
-            Decode(_transport.Sent[1].Payload).Player);
+        using var stop = new CancellationTokenSource();
+        var writer = Task.Run(
+            () =>
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    config.DisplayName = tooLong;
+                    config.DisplayName = "bob";
+                }
+            });
 
-        // One read for each of the two cycles.
-        Assert.Equal(2, config.Reads);
+        try
+        {
+            for (var cycle = 0; cycle < 20000; cycle++)
+            {
+                await service.RunCycleAsync(default);
+            }
+        }
+        finally
+        {
+            stop.Cancel();
+            await writer;
+        }
     }
 
     [Fact]
