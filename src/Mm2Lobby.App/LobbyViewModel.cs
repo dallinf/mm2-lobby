@@ -683,6 +683,29 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         _environment.Config.ZeroTierNetworkId = id;
         SaveTheConfiguration();
         NetworkIdMessage = SavedNetworkIdMessage;
+        MarkTheChecksStale();
+    }
+
+    /// <summary>
+    /// Takes the result off every check row. The checks ran against the old
+    /// network ID, and the ZeroTier check reads that ID. So a row that kept
+    /// its Pass would assert something that no longer holds.
+    /// </summary>
+    /// <remarks>
+    /// This method also opens the setup panel. The Check again button sits
+    /// inside that panel, and the panel closes itself once every check passes.
+    /// A closed panel would hide the button that the message names.
+    /// </remarks>
+    private void MarkTheChecksStale()
+    {
+        if (CheckRows.Count == 0) return;
+
+        var names = CheckRows.Select(row => row.Name).ToList();
+
+        CheckRows.Clear();
+        foreach (var name in names) CheckRows.Add(CheckRow.Stale(name));
+
+        SetupExpanded = true;
     }
 
     private void ShowTheNetworkId(string value)

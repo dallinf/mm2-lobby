@@ -984,6 +984,67 @@ public class LobbyViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_new_network_ID_marks_every_check_row_stale()
+    {
+        // The checks ran against the old ID. A row that still says OK asserts
+        // something that no longer holds, and the ZeroTier row is the one that
+        // the new ID can turn into a problem.
+        AddCheck("ZeroTier");
+        AddCheck("Firewall");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.All(model.CheckRows, row => Assert.Equal("OK", row.Mark));
+        Assert.False(model.SetupExpanded);
+
+        model.ZeroTierNetworkId = "8056c2e21c000001";
+
+        Assert.Equal(
+            new[] { "ZeroTier", "Firewall" },
+            model.CheckRows.Select(row => row.Name));
+
+        Assert.All(model.CheckRows, row =>
+        {
+            Assert.Equal("Unknown", row.Mark);
+            Assert.Contains("Check again", row.Message);
+            Assert.False(row.ShowAction);
+        });
+
+        // The Check again button sits inside the setup panel. A closed panel
+        // hides the button that the message names.
+        Assert.True(model.SetupExpanded);
+    }
+
+    [Fact]
+    public async Task The_same_network_ID_leaves_the_check_rows_alone()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.ZeroTierNetworkId = "0123456789ABCDEF";
+
+        Assert.Equal("OK", model.CheckRows[0].Mark);
+        Assert.False(model.SetupExpanded);
+    }
+
+    [Fact]
+    public async Task A_bad_network_ID_leaves_the_check_rows_alone()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.ZeroTierNetworkId = "my network";
+
+        // The configuration keeps the old ID, so every result still holds.
+        Assert.Equal("OK", model.CheckRows[0].Mark);
+    }
+
+    [Fact]
     public async Task A_player_who_types_the_ID_reaches_the_lobby_without_a_restart()
     {
         // A fresh install holds no network ID. The ZeroTier check then fails,

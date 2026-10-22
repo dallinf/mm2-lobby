@@ -39,6 +39,24 @@ public sealed record CheckRow(
             !passed || repairHint is not null);
     }
 
+    /// <summary>
+    /// Builds a row for a check whose last result no longer holds. The player
+    /// changed the ZeroTier network ID, so the ZeroTier check ran against
+    /// another network. A row that still showed its old Pass would assert
+    /// something false.
+    /// </summary>
+    /// <param name="name">The name of the check.</param>
+    public static CheckRow Stale(string name) => new(
+        name,
+        MarkOf(CheckStatus.Unavailable),
+        "The network ID changed. Choose Check again.",
+        string.Empty,
+        "Fix",
+
+        // The row offers no button. A fix for a result that the app no longer
+        // has would run against an unknown state.
+        false);
+
     private static string MarkOf(CheckStatus status) => status switch
     {
         CheckStatus.Pass => "OK",
