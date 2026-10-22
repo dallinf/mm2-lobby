@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace Mm2Lobby.Core.Configuration;
@@ -125,10 +126,10 @@ public sealed class ConfigStore
     /// name is blank. A hand-edited file can hold such an entry, and
     /// PeerDirectory would show it as a peer that never leaves.
     /// </summary>
-    private static Dictionary<string, string> CopyValidEntries(
-        Dictionary<string, string>? source)
+    private static ConcurrentDictionary<string, string> CopyValidEntries(
+        ConcurrentDictionary<string, string>? source)
     {
-        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var map = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (source is null) return map;
 
         foreach (var (nodeId, name) in source)

@@ -216,6 +216,61 @@ public class ConfigStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_reader_of_the_remembered_names_accepts_a_new_entry()
+    {
+        // JsonSerializer reads every entry of this map inside Save, and the
+        // pump adds a node ID in LobbyService.RememberNames, outside the lock
+        // of Save. This test holds a reader open and then adds one entry, as
+        // those two threads do.
+        //
+        // A plain Dictionary throws InvalidOperationException on the next
+        // step. Neither catch filter covers that exception, so it leaves
+        // GamePathCheck.FixAsync, the rollback of that method puts back the
+        // old empty game path, and the player loses the game that they chose.
+        var config = new AppConfig();
+        for (var count = 0; count < 100; count++)
+        {
+            config.RememberedNames[$"node{count:000}"] = "chris";
+        }
+
+        using var reader = config.RememberedNames.GetEnumerator();
+        Assert.True(reader.MoveNext());
+
+        config.RememberedNames["bb11223344"] = "sam";
+
+        while (reader.MoveNext())
+        {
+        }
+    }
+
+    [Fact]
+    public void A_save_that_fails_keeps_every_value_of_the_old_file()
+    {
+        // GamePathCheck puts back the old game path when Save throws, so the
+        // file must still hold what it held. A folder in place of the
+        // temporary file makes the next write fail.
+        var store = new ConfigStore(Path_);
+        store.Save(new AppConfig
+        {
+            DisplayName = "dallin",
+            GamePath = @"C:\MM2\midtown2.exe",
+            ZeroTierNetworkId = "0123456789abcdef",
+            RememberedNames = { ["bb11223344"] = "chris" },
+        });
+
+        Directory.CreateDirectory(Path.Combine(_folder, "wall"));
+        var blocked = new ConfigStore(Path.Combine(_folder, "wall"));
+
+        Assert.ThrowsAny<IOException>(() => blocked.Save(new AppConfig { DisplayName = "lost" }));
+
+        var kept = store.Load();
+        Assert.Equal("dallin", kept.DisplayName);
+        Assert.Equal(@"C:\MM2\midtown2.exe", kept.GamePath);
+        Assert.Equal("0123456789abcdef", kept.ZeroTierNetworkId);
+        Assert.Equal("chris", kept.RememberedNames["bb11223344"]);
+    }
+
+    [Fact]
     public void DefaultPath_sits_under_the_application_data_folder()
     {
         Assert.Contains("Mm2Lobby", ConfigStore.DefaultPath);
