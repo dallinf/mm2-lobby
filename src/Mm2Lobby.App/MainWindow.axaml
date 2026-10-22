@@ -1,0 +1,110 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:app="using:Mm2Lobby.App"
+        x:Class="Mm2Lobby.App.MainWindow"
+        x:DataType="app:LobbyViewModel"
+        Title="MM2 Lobby" Width="880" Height="660"
+        MinWidth="720" MinHeight="520">
+
+  <Grid Margin="16" RowDefinitions="Auto,Auto,*,Auto">
+
+    <!-- The name editor. The limit comes from PeerTable. -->
+    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
+      <TextBlock Text="Your name" VerticalAlignment="Center" FontWeight="Bold" />
+      <TextBox Width="260"
+               MaxLength="{Binding DisplayNameMaxLength}"
+               Text="{Binding DisplayName, Mode=TwoWay,
+                              UpdateSourceTrigger=LostFocus}" />
+      <TextBlock VerticalAlignment="Center" Foreground="Gray"
+                 Text="The others see this name after two seconds." />
+    </StackPanel>
+
+    <!-- The setup list. It opens while a check fails. -->
+    <Expander Grid.Row="1" Header="Setup" IsExpanded="{Binding SetupExpanded}"
+              HorizontalAlignment="Stretch" Margin="0,0,0,12">
+      <StackPanel Spacing="8">
+        <ItemsControl ItemsSource="{Binding CheckRows}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="app:CheckRow">
+              <Grid ColumnDefinitions="150,90,*,Auto" Margin="0,6">
+                <TextBlock Grid.Column="0" Text="{Binding Name}" FontWeight="Bold"
+                           TextWrapping="Wrap" VerticalAlignment="Top" />
+                <TextBlock Grid.Column="1" Text="{Binding Mark}" VerticalAlignment="Top" />
+                <StackPanel Grid.Column="2" Spacing="2">
+                  <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding Advice}" TextWrapping="Wrap" Foreground="Gray" />
+                </StackPanel>
+                <Button Grid.Column="3" Content="{Binding ActionLabel}"
+                        IsVisible="{Binding ShowAction}" Tag="{Binding Name}"
+                        Click="OnFixClick" Margin="8,0,0,0" Padding="12,4"
+                        VerticalAlignment="Top" />
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <Button Content="Check again" Click="OnCheckAgainClick"
+                IsEnabled="{Binding CanCheckAgain}"
+                HorizontalAlignment="Left" Padding="12,4" />
+      </StackPanel>
+    </Expander>
+
+    <!-- The lobby list. -->
+    <Grid Grid.Row="2" RowDefinitions="Auto,*">
+      <Grid Grid.Row="0" ColumnDefinitions="*,200,130,80,190" Margin="4,0,4,4">
+        <TextBlock Grid.Column="0" Text="Player" FontWeight="Bold" />
+        <TextBlock Grid.Column="1" Text="State" FontWeight="Bold" />
+        <TextBlock Grid.Column="2" Text="Address" FontWeight="Bold" />
+        <TextBlock Grid.Column="3" Text="Link" FontWeight="Bold" />
+        <TextBlock Grid.Column="4" Text="Warning" FontWeight="Bold" />
+      </Grid>
+
+      <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" CornerRadius="4">
+        <ScrollViewer>
+          <ItemsControl ItemsSource="{Binding PeerRows}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="app:PeerRow">
+                <Grid ColumnDefinitions="*,200,130,80,190" Margin="4,3">
+                  <TextBlock Grid.Column="0" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="1" Text="{Binding State}" TextWrapping="Wrap" />
+                  <TextBlock Grid.Column="2" Text="{Binding Address}" />
+                  <TextBlock Grid.Column="3" Text="{Binding Link}" />
+                  <TextBlock Grid.Column="4" Text="{Binding VersionNote}" TextWrapping="Wrap"
+                             IsVisible="{Binding VersionDiffers}" FontWeight="Bold" />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+
+    <!-- The host panel and the two buttons. -->
+    <StackPanel Grid.Row="3" Spacing="4" Margin="0,12,0,0">
+      <TextBlock Text="{Binding HostTitle}" FontWeight="Bold" />
+      <SelectableTextBlock Text="{Binding HostAddress}" FontSize="30" FontWeight="Bold"
+                           IsVisible="{Binding HasHostAddress}" />
+
+      <ItemsControl ItemsSource="{Binding JoinSteps}" Margin="0,0,0,4">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="x:String">
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,1" />
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap"
+                 IsVisible="{Binding HasStatusMessage}" Foreground="Gray" />
+      <TextBlock Text="{Binding FaultMessage}" TextWrapping="Wrap"
+                 IsVisible="{Binding HasFaultMessage}" FontWeight="Bold" />
+
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+        <Button Content="{Binding HostButtonText}" IsEnabled="{Binding CanHost}"
+                Click="OnHostClick" Padding="14,6" />
+        <Button Content="Join the host" IsEnabled="{Binding CanJoin}"
+                Click="OnJoinClick" Padding="14,6" />
+      </StackPanel>
+    </StackPanel>
+
+  </Grid>
+</Window>
