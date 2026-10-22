@@ -428,6 +428,10 @@ rejects such an announcement, so the player would become invisible to every
 friend while their own list looked normal, because the app excludes itself from
 its own list. The window limits the text box, and `LobbyService` truncates
 before it announces.
+An empty display name is the same failure: `PeerTable` rejects an announcement
+that carries no name. `ConfigStore.Load` puts the computer name in the place of
+a blank name at the start, and the window does the same at run time. So a
+player who clears the box keeps a name.
 A missing or malformed file loads the defaults rather than failing.
 
 **The window also owns the network ID.** Revision 2 named

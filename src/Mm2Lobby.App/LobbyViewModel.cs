@@ -621,6 +621,15 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         var name = value ?? string.Empty;
 
+        // A blank name makes the player invisible. PeerTable rejects an
+        // announcement that carries no name, so every friend drops the
+        // datagram, and the player cannot see that, because the app excludes
+        // itself from its own list. ConfigStore.Load puts the computer name in
+        // the place of a blank name at the start, and this method does the same
+        // at run time. So a player who clears the box, and a player who closes
+        // the window with an empty box, both keep a name.
+        if (string.IsNullOrWhiteSpace(name)) name = Environment.MachineName;
+
         if (name.Length > PeerTable.MaxPlayerNameLength)
         {
             name = name[..PeerTable.MaxPlayerNameLength];

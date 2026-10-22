@@ -852,6 +852,54 @@ public class LobbyViewModelTests : IDisposable
         Assert.Contains("the file is read-only", model.StatusMessage);
     }
 
+    /// <summary>
+    /// The name that the app announces for the computer name. PeerTable also
+    /// limits the length, so a long computer name arrives short.
+    /// </summary>
+    private static string ComputerName() => string.Concat(
+        Environment.MachineName.Take(PeerTable.MaxPlayerNameLength));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task The_window_puts_the_computer_name_in_the_place_of_a_blank_name(string blank)
+    {
+        // PeerTable rejects an announcement that carries no name. Every friend
+        // then stops showing this player, and the player cannot see that,
+        // because the app excludes itself from its own list.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        model.DisplayName = blank;
+
+        Assert.Equal(ComputerName(), model.DisplayName);
+        Assert.Equal(ComputerName(), _environment.Config.DisplayName);
+    }
+
+    [Fact]
+    public async Task A_player_who_clears_the_name_box_stays_visible_to_every_friend()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.DisplayName = string.Empty;
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        // Every friend runs this test on the datagram. A datagram that carries
+        // no name does not reach their list. This assertion comes first,
+        // because it is the one that the defect broke.
+        var payload = _environment.Transports[0].Sent[^1].Payload;
+        var address = IPAddress.Parse("10.147.17.42");
+        var table = new PeerTable(LobbyService.PeerExpiry, () => _environment.Now);
+        Assert.True(table.Accept(payload, address, IPv4Math.Subnet(address, 24)));
+
+        var announcement = Announcement.TryParse(payload);
+        Assert.NotNull(announcement);
+        Assert.Equal(ComputerName(), announcement.Player);
+    }
+
     // --- The network ID editor ---------------------------------------------
 
     [Fact]
