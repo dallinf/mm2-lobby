@@ -13,6 +13,14 @@ public sealed class ZeroTierCheck : ICheck
 {
     private const string DownloadPage = "https://www.zerotier.com/download/";
 
+    private const string CentralPage = "https://my.zerotier.com";
+
+    /// <summary>
+    /// The name of the box of the window. The app has no settings screen, so
+    /// every piece of advice about the ID names this box.
+    /// </summary>
+    private const string IdBox = "ZeroTier network ID";
+
     private readonly IZeroTierClient _zeroTier;
     private readonly AppConfig _config;
 
@@ -59,7 +67,9 @@ public sealed class ZeroTierCheck : ICheck
         {
             return Fail(
                 "No ZeroTier network ID is set.",
-                "Enter the network ID of the group in the settings.");
+                $"Type the ID of the group in the box named {IdBox} at the top of this window. "
+                    + "Then choose Check again. "
+                    + $"ZeroTier Central at {CentralPage} shows the ID of your network.");
         }
 
         var network = await _zeroTier.GetNetworkAsync(networkId, ct);
@@ -93,7 +103,9 @@ public sealed class ZeroTierCheck : ICheck
 
             "NOT_FOUND" => Fail(
                 $"ZeroTier cannot find network {networkId} (status NOT_FOUND).",
-                "Check the network ID in the settings. The ID has 16 characters."),
+                $"Check the ID in the box named {IdBox} at the top of this window. "
+                    + $"An ID has {NetworkIdRule.Length} characters. "
+                    + $"ZeroTier Central at {CentralPage} shows the ID of your network."),
 
             "CLIENT_TOO_OLD" => Fail(
                 "This version of ZeroTier is too old for the network (status CLIENT_TOO_OLD).",

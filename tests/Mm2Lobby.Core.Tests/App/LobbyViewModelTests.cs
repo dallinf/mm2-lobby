@@ -6,6 +6,7 @@ using Mm2Lobby.Core.Peers;
 using Mm2Lobby.Core.Preflight;
 using Mm2Lobby.Core.Tests.Fakes;
 using Mm2Lobby.Core.ZeroTier;
+using Mm2Lobby.Windows.Checks;
 
 namespace Mm2Lobby.Core.Tests.App;
 
@@ -849,6 +850,115 @@ public class LobbyViewModelTests : IDisposable
         model.DisplayName = "dallin";
 
         Assert.Contains("the file is read-only", model.StatusMessage);
+    }
+
+    // --- The network ID editor ---------------------------------------------
+
+    [Fact]
+    public async Task The_window_shows_the_network_ID_of_the_configuration()
+    {
+        AddCheck("ZeroTier");
+        _environment.Config.ZeroTierNetworkId = "8056c2e21c000001";
+
+        await using var model = Build();
+
+        Assert.Equal("8056c2e21c000001", model.ZeroTierNetworkId);
+    }
+
+    [Fact]
+    public async Task The_ID_editor_writes_the_ID_to_the_one_configuration()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        model.ZeroTierNetworkId = "   8056C2E21C000001   ";
+
+        Assert.Equal("8056c2e21c000001", _environment.Config.ZeroTierNetworkId);
+        Assert.Equal("8056c2e21c000001", model.ZeroTierNetworkId);
+        Assert.Equal(1, _environment.SaveCount);
+        Assert.Equal("8056c2e21c000001", _environment.ConfigStore.Load().ZeroTierNetworkId);
+    }
+
+    [Fact]
+    public async Task The_window_names_Check_again_after_it_saves_an_ID()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        model.ZeroTierNetworkId = "8056c2e21c000001";
+
+        Assert.True(model.HasNetworkIdMessage);
+        Assert.Contains("Check again", model.NetworkIdMessage);
+    }
+
+    [Fact]
+    public async Task A_bad_ID_does_not_reach_the_configuration()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        model.ZeroTierNetworkId = "my network";
+
+        // The configuration keeps the ID that it had, and the box keeps the
+        // text of the player, so the player can correct that text.
+        Assert.Equal("0123456789abcdef", _environment.Config.ZeroTierNetworkId);
+        Assert.Equal(0, _environment.SaveCount);
+        Assert.Equal("my network", model.ZeroTierNetworkId);
+    }
+
+    [Fact]
+    public async Task The_advice_for_a_bad_ID_names_the_rule_and_ZeroTier_Central()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        model.ZeroTierNetworkId = "abc";
+
+        Assert.True(model.HasNetworkIdMessage);
+        Assert.Contains("16 characters", model.NetworkIdMessage);
+        Assert.Contains("https://my.zerotier.com", model.NetworkIdMessage);
+    }
+
+    [Fact]
+    public async Task The_window_saves_nothing_when_the_ID_does_not_change()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+
+        // The binding writes on every loss of the focus. The same ID must not
+        // write the file again.
+        model.ZeroTierNetworkId = "0123456789ABCDEF";
+
+        Assert.Equal(0, _environment.SaveCount);
+        Assert.Equal("0123456789abcdef", model.ZeroTierNetworkId);
+        Assert.False(model.HasNetworkIdMessage);
+    }
+
+    [Fact]
+    public async Task A_player_who_types_the_ID_reaches_the_lobby_without_a_restart()
+    {
+        // A fresh install holds no network ID. The ZeroTier check then fails,
+        // and StartTheLobbyAsync returns before it builds a lobby. This test
+        // walks the way out of that state: the player types the ID, and then
+        // chooses Check again.
+        var zeroTier = new FakeZeroTierClient();
+        _environment.ZeroTier = zeroTier;
+        _environment.Config.ZeroTierNetworkId = string.Empty;
+        _environment.Checks.Add(
+            new CheckEntry(new ZeroTierCheck(zeroTier, _environment.Config)));
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Equal(0, _environment.CreateLobbyCount);
+        Assert.False(model.CanHost);
+
+        model.ZeroTierNetworkId = " 0123456789ABCDEF ";
+        await model.CheckAgainAsync();
+
+        Assert.Equal(1, _environment.CreateLobbyCount);
+        Assert.True(model.CanHost);
     }
 
     // --- The fault of the last cycle ---------------------------------------

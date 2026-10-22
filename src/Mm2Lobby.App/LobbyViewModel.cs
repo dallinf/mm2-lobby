@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using Mm2Lobby.Core.Configuration;
 using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
@@ -20,6 +21,24 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private const string NoHostTitle = "No one hosts a race now.";
     private const string WorkingMessage = "The app is busy. Please wait.";
 
+    /// <summary>
+    /// The advice for a network ID that breaks the rule. The app has no
+    /// settings screen, so this text is the only place that tells the player
+    /// the rule and the page that shows the ID.
+    /// </summary>
+    private const string BadNetworkIdMessage =
+        "The app did not save that network ID. An ID has 16 characters, and each "
+        + "character is 0-9 or a-f. ZeroTier Central at https://my.zerotier.com "
+        + "shows the ID of your network.";
+
+    /// <summary>
+    /// The message after a saved ID. The checks read the ID again on every
+    /// run, so Check again starts the lobby and the player does not restart
+    /// the app.
+    /// </summary>
+    private const string SavedNetworkIdMessage =
+        "The app saved the network ID. Choose Check again to start the lobby.";
+
     private static readonly string[] NoSteps = Array.Empty<string>();
 
     private readonly ILobbyEnvironment _environment;
@@ -33,6 +52,8 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private bool _disposed;
 
     private string _displayName = string.Empty;
+    private string _networkId = string.Empty;
+    private string _networkIdMessage = string.Empty;
     private string _hostTitle = NoHostTitle;
     private string _hostAddress = string.Empty;
     private string _hostButtonText = HostLabel;
@@ -54,6 +75,11 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         // rejects such a name, so the app must shorten it before the first
         // announcement.
         SetTheName(environment.Config.DisplayName);
+
+        // The box shows the ID that the file holds, even a bad one. The
+        // ZeroTier check then reports the fault, and the player sees the text
+        // that caused it.
+        _networkId = environment.Config.ZeroTierNetworkId;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -89,6 +115,39 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     /// because the app excludes itself from its own list.
     /// </summary>
     public int DisplayNameMaxLength => PeerTable.MaxPlayerNameLength;
+
+    /// <summary>
+    /// The ID of the ZeroTier network of the group. The setter writes a valid
+    /// ID to the one configuration object and saves the file. The ZeroTier
+    /// check and the lobby service read the ID from that object, so Check
+    /// again starts the lobby with the new ID.
+    /// </summary>
+    /// <remarks>
+    /// The window gives this box no MaxLength. A pasted ID can carry a space
+    /// at each end, and a limit of 16 would cut two characters off such a
+    /// paste. NetworkIdRule removes the spaces instead.
+    /// </remarks>
+    public string ZeroTierNetworkId
+    {
+        get => _networkId;
+        set => SetTheNetworkId(value);
+    }
+
+    /// <summary>
+    /// What the last write of the network ID did. The text names the rule
+    /// after a value that breaks it, and it names the Check again button after
+    /// a save.
+    /// </summary>
+    public string NetworkIdMessage
+    {
+        get => _networkIdMessage;
+        private set
+        {
+            if (Set(ref _networkIdMessage, value)) OnPropertyChanged(nameof(HasNetworkIdMessage));
+        }
+    }
+
+    public bool HasNetworkIdMessage => _networkIdMessage.Length > 0;
 
     /// <summary>
     /// True while the setup list is open. The setter is public because
@@ -573,6 +632,52 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         _displayName = name;
         return true;
+    }
+
+    /// <summary>
+    /// Writes a network ID to the one configuration object. A value that
+    /// breaks the rule of NetworkIdRule does not reach that object, and the
+    /// message then gives the player the rule.
+    /// </summary>
+    private void SetTheNetworkId(string? value)
+    {
+        var typed = value ?? string.Empty;
+
+        if (!NetworkIdRule.TryRead(typed, out var id))
+        {
+            // The box keeps the text of the player. A box that empties itself
+            // takes away the value that the player must correct.
+            ShowTheNetworkId(typed);
+            NetworkIdMessage = BadNetworkIdMessage;
+            return;
+        }
+
+        var isNew = id != _environment.Config.ZeroTierNetworkId;
+
+        // The box shows the trimmed ID in lower case, which is the form that
+        // the file holds.
+        ShowTheNetworkId(id);
+
+        if (!isNew)
+        {
+            // The binding writes on every loss of the focus. The same ID must
+            // not write the file again, and the old message must go, because
+            // it belongs to an earlier write.
+            NetworkIdMessage = string.Empty;
+            return;
+        }
+
+        _environment.Config.ZeroTierNetworkId = id;
+        SaveTheConfiguration();
+        NetworkIdMessage = SavedNetworkIdMessage;
+    }
+
+    private void ShowTheNetworkId(string value)
+    {
+        if (value == _networkId) return;
+
+        _networkId = value;
+        OnPropertyChanged(nameof(ZeroTierNetworkId));
     }
 
     private void SaveTheConfiguration()

@@ -70,6 +70,26 @@ public class ZeroTierCheckTests
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Null(_zeroTier.RequestedNetworkId);
         Assert.Contains("network ID", result.Message);
+
+        // The app has no settings screen. The advice must name the box of the
+        // window, and it must name the button that starts the lobby.
+        Assert.Contains("ZeroTier network ID", result.FixDescription);
+        Assert.Contains("Check again", result.FixDescription);
+        Assert.DoesNotContain("settings", result.FixDescription);
+    }
+
+    [Fact]
+    public async Task The_advice_for_NOT_FOUND_names_the_box_and_ZeroTier_Central()
+    {
+        _zeroTier.Network = new ZeroTierNetwork(NetworkId, "NOT_FOUND", null, 0);
+
+        var result = await Check().RunAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("ZeroTier network ID", result.FixDescription);
+        Assert.Contains("16 characters", result.FixDescription);
+        Assert.Contains("https://my.zerotier.com", result.FixDescription);
+        Assert.DoesNotContain("settings", result.FixDescription);
     }
 
     [Fact]

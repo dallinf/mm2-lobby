@@ -4,8 +4,8 @@
         x:Class="Mm2Lobby.App.MainWindow"
         x:Name="Root"
         x:DataType="app:LobbyViewModel"
-        Title="MM2 Lobby" Width="880" Height="760"
-        MinWidth="880" MinHeight="760"
+        Title="MM2 Lobby" Width="880" Height="830"
+        MinWidth="880" MinHeight="830"
         Closing="OnWindowClosing">
 
   <!-- The worst case for the layout is the Setup panel open with four rows
@@ -17,21 +17,54 @@
        row gets 177, which holds about six peers. At 720 the messages wrap
        further, the panel grows to 519, and the list row falls to 79. So the
        width matters as much as the height, and the window does not go below
-       880 by 760. -->
+       880 by 760.
+
+       The network ID row and its message join the top of the window after
+       that measurement. They take about 70 more, so the height grows from
+       760 to 830 and the list of peers keeps the room above. Nobody has
+       measured the new layout on Windows. -->
 
   <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto">
 
-    <!-- The name editor. The limit comes from PeerTable. -->
-    <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,*" Margin="0,0,0,12">
-      <TextBlock Grid.Column="0" Text="Your name" VerticalAlignment="Center"
+    <!-- The two editors of the configuration. The window owns the one
+         AppConfig, and these two boxes are the only place where the player
+         changes it. One Grid holds both rows, so the two boxes line up. -->
+    <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,*"
+          RowDefinitions="Auto,Auto,Auto" Margin="0,0,0,12">
+
+      <!-- The name editor. The limit comes from PeerTable. -->
+      <TextBlock Grid.Row="0" Grid.Column="0" Text="Your name" VerticalAlignment="Center"
                  FontWeight="Bold" Margin="0,0,8,0" />
-      <TextBox Grid.Column="1" x:Name="NameBox" Width="260" Margin="0,0,8,0"
+      <TextBox Grid.Row="0" Grid.Column="1" x:Name="NameBox" Width="260" Margin="0,0,8,0"
                MaxLength="{Binding DisplayNameMaxLength}"
                Text="{Binding DisplayName, Mode=TwoWay,
                               UpdateSourceTrigger=LostFocus}" />
-      <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="Gray"
+      <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Foreground="Gray"
                  TextWrapping="Wrap"
                  Text="Click outside the box. The others then see the new name after two seconds." />
+
+      <!-- The network ID editor. Without it, a fresh install has no way to
+           reach a lobby: the ZeroTier check fails, and the app blocks Host
+           and Join.
+
+           This box has no MaxLength. A player pastes the ID, a paste can
+           carry a space at each end, and a limit of 16 would cut two
+           characters off such a paste. NetworkIdRule removes the spaces. -->
+      <TextBlock Grid.Row="1" Grid.Column="0" Text="ZeroTier network ID"
+                 VerticalAlignment="Center" FontWeight="Bold" Margin="0,8,8,0" />
+      <TextBox Grid.Row="1" Grid.Column="1" x:Name="NetworkIdBox" Width="260"
+               Margin="0,8,8,0"
+               Text="{Binding ZeroTierNetworkId, Mode=TwoWay,
+                              UpdateSourceTrigger=LostFocus}" />
+      <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Foreground="Gray"
+                 TextWrapping="Wrap" Margin="0,8,0,0"
+                 Text="Click outside the box. The app then saves the ID." />
+
+      <!-- What the last write of the ID did. -->
+      <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3"
+                 Text="{Binding NetworkIdMessage}" TextWrapping="Wrap"
+                 IsVisible="{Binding HasNetworkIdMessage}" FontWeight="Bold"
+                 Margin="0,8,0,0" />
     </Grid>
 
     <!-- The setup list. It opens while a check fails. -->
