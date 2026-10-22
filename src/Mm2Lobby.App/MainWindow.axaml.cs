@@ -10,7 +10,14 @@ namespace Mm2Lobby.App;
 /// </summary>
 public sealed partial class MainWindow : Window
 {
-    public MainWindow() => AvaloniaXamlLoader.Load(this);
+    /// <summary>
+    /// This constructor calls the method that the XAML compiler builds. That
+    /// method loads the layout and it also fills the field of every x:Name.
+    /// AvaloniaXamlLoader.Load loads the layout alone, and every one of those
+    /// fields then stays null: the window threw NullReferenceException on the
+    /// way out, and the name of the player never reached the file.
+    /// </summary>
+    public MainWindow() => InitializeComponent();
 
     private LobbyViewModel? Model => DataContext as LobbyViewModel;
 
