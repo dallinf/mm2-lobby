@@ -36,13 +36,13 @@ public class DirectPlayCheckTests
     }
 
     [Fact]
-    public async Task Fails_with_an_administrator_fix_when_the_library_is_missing()
+    public async Task Fails_with_a_fix_that_names_the_component_when_the_library_is_missing()
     {
         var result = await Check().RunAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("DirectPlay", result.Message);
-        Assert.Contains("administrator", result.FixDescription);
+        Assert.Contains("DirectPlay Windows component", result.FixDescription);
     }
 
     [Fact]
@@ -65,36 +65,70 @@ public class DirectPlayCheckTests
         Assert.Equal(new[] { $"dism.exe {EnableArguments}" }, _elevated.Calls);
     }
 
-    [Theory]
-    [InlineData(1)]
-    [InlineData(127)]
-    public async Task FixAsync_reports_the_exit_code_and_the_manual_command_when_DISM_fails(
-        int exitCode)
+    [Fact]
+    public async Task FixAsync_blames_the_permission_prompt_only_for_exit_code_127()
     {
-        _elevated.Returns("dism.exe", EnableArguments, exitCode);
+        _elevated.Returns("dism.exe", EnableArguments, 127);
 
         var result = await Check().FixAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
-        Assert.Contains($"exit code {exitCode}", result.Message);
-        Assert.Contains("administrator prompt", result.Message);
+        Assert.Contains("exit code 127", result.Message);
+        Assert.Contains("If you chose No at the permission prompt, that is the cause", result.Message);
+        Assert.Contains($"dism {EnableArguments}", result.FixDescription);
+        Assert.Contains("Press Fix again", result.FixDescription);
+        Assert.Empty(_probed);
+    }
+
+    [Fact]
+    public async Task FixAsync_reports_the_exit_code_and_says_the_command_failed_for_any_other_code()
+    {
+        _elevated.Returns("dism.exe", EnableArguments, 1);
+
+        var result = await Check().FixAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("exit code 1", result.Message);
+        Assert.Contains("The command failed", result.Message);
+        Assert.DoesNotContain("permission prompt", result.Message);
         Assert.Contains($"dism {EnableArguments}", result.FixDescription);
         Assert.Empty(_probed);
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(3010)]
-    public async Task FixAsync_asks_for_a_restart_when_DISM_succeeds_but_the_library_is_still_missing(
-        int exitCode)
+    [Fact]
+    public async Task FixAsync_asks_for_a_restart_only_when_DISM_returns_3010_and_the_library_is_still_missing()
     {
-        _elevated.Returns("dism.exe", EnableArguments, exitCode);
+        _elevated.Returns("dism.exe", EnableArguments, 3010);
 
         var result = await Check().FixAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
-        Assert.Contains("restart", result.FixDescription, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("exit code", result.Message);
+        Assert.Contains("needs a restart", result.Message);
+        Assert.Contains("Restart Windows", result.FixDescription);
+    }
+
+    [Fact]
+    public async Task FixAsync_does_not_ask_for_a_restart_when_DISM_returns_0_and_the_library_is_still_missing()
+    {
+        _elevated.Returns("dism.exe", EnableArguments, 0);
+
+        var result = await Check().FixAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("reported success", result.Message);
+        Assert.Contains(@"C:\Windows\SysWOW64\dplayx.dll", result.Message);
+        Assert.DoesNotContain("estart", result.Message);
+        Assert.DoesNotContain("estart", result.FixDescription);
+        Assert.Contains("Report this", result.FixDescription);
+    }
+
+    [Fact]
+    public async Task Tells_the_player_to_expect_one_permission_prompt()
+    {
+        var result = await Check().RunAsync(default);
+
+        Assert.Contains("Windows will ask for permission one time", result.FixDescription);
+        Assert.Contains("Choose Yes", result.FixDescription);
     }
 
     [Fact]

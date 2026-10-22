@@ -26,19 +26,21 @@ public sealed class ZeroTierCheck : ICheck
 
     public async Task<CheckResult> RunAsync(CancellationToken ct)
     {
-        // zerotier-cli fails in three cases: ZeroTier is not installed, its
+        // zerotier-cli fails in three cases. ZeroTier is not installed, or its
         // service is stopped, or the user cannot read the authentication token
-        // of the service. Windows lets only an administrator read that token
-        // by default. The app cannot tell the three cases apart.
+        // of the service. By default, Windows lets only an administrator read
+        // that token. The app sees the same failure in all three cases, so the
+        // fix text names all three.
         var status = await _zeroTier.GetStatusAsync(ct);
         if (status is null)
         {
             return Fail(
                 "The app cannot reach ZeroTier. ZeroTier is not installed, its service is stopped, "
                     + "or only an administrator can read the ZeroTier authentication token.",
-                $"If ZeroTier is not installed, install it from {DownloadPage}. "
-                    + "If it is installed, start the ZeroTier One service in Windows Services. "
-                    + "If the service runs, close this app and run it as an administrator. "
+                "Open Windows Services. "
+                    + $"If ZeroTier One is not in the list, install ZeroTier from {DownloadPage}. "
+                    + "If ZeroTier One is Stopped, start it. "
+                    + "If ZeroTier One is Running, close this app and run it as an administrator. "
                     + "Then run the check again.");
         }
 
@@ -90,6 +92,10 @@ public sealed class ZeroTierCheck : ICheck
             "NOT_FOUND" => Fail(
                 $"ZeroTier cannot find network {networkId} (status NOT_FOUND).",
                 "Check the network ID in the settings. The ID has 16 characters."),
+
+            "CLIENT_TOO_OLD" => Fail(
+                "This version of ZeroTier is too old for the network (status CLIENT_TOO_OLD).",
+                $"Update ZeroTier from {DownloadPage}. Then run the check again."),
 
             "REQUESTING_CONFIGURATION" => Fail(
                 "ZeroTier is still asking the network for its settings "

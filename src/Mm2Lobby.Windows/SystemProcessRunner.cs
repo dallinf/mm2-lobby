@@ -6,7 +6,7 @@ namespace Mm2Lobby.Windows;
 
 /// <summary>
 /// This class runs a program and waits for it to exit. It never throws when
-/// the program is missing or when the player refuses the administrator
+/// the program is missing or when the player refuses the permission
 /// prompt. It returns exit code 127 instead. ZeroTierClient depends on this.
 /// </summary>
 public sealed class SystemProcessRunner : IProcessRunner
@@ -52,7 +52,7 @@ public sealed class SystemProcessRunner : IProcessRunner
         catch (Exception e) when (e is Win32Exception or FileNotFoundException)
         {
             // Win32Exception covers a missing program. It also covers a player
-            // who chooses No at the administrator prompt.
+            // who chooses No at the permission prompt.
             return new ProcessResult(127, "", e.Message);
         }
     }

@@ -17,8 +17,6 @@ public class FirewallCheckTests
 
     private static readonly string ShowInbound = Show(InboundName);
     private static readonly string ShowOutbound = Show(OutboundName);
-    private static readonly string DeleteInbound = Delete(InboundName);
-    private static readonly string DeleteOutbound = Delete(OutboundName);
 
     private readonly FakeProcessRunner _plain = new();
     private readonly FakeElevatedProcessRunner _elevated = new();
@@ -29,9 +27,6 @@ public class FirewallCheckTests
     private static string Show(string name)
         => $"{Program} advfirewall firewall show rule name=\"{name}\"";
 
-    private static string Delete(string name)
-        => $"{Program} advfirewall firewall delete rule name=\"{name}\"";
-
     private static string AddInbound(string path = GamePath)
         => $"{Program} advfirewall firewall add rule name=\"{InboundName}\" "
             + $"dir=in action=allow program=\"{path}\" enable=yes profile=any";
@@ -39,6 +34,14 @@ public class FirewallCheckTests
     private static string AddOutbound(string path = GamePath)
         => $"{Program} advfirewall firewall add rule name=\"{OutboundName}\" "
             + $"dir=out action=allow program=\"{path}\" enable=yes profile=any";
+
+    private static string SetInbound(string path = GamePath)
+        => $"{Program} advfirewall firewall set rule name=\"{InboundName}\" dir=in "
+            + $"new program=\"{path}\" action=allow enable=yes profile=any";
+
+    private static string SetOutbound(string path = GamePath)
+        => $"{Program} advfirewall firewall set rule name=\"{OutboundName}\" dir=out "
+            + $"new program=\"{path}\" action=allow enable=yes profile=any";
 
     private static string Arguments(string call) => call[(Program.Length + 1)..];
 
@@ -88,10 +91,9 @@ public class FirewallCheckTests
         var result = await Check().RunAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
-        Assert.Contains("outbound", result.Message);
+        Assert.Contains("outbound traffic", result.Message);
         Assert.DoesNotContain("inbound", result.Message);
-        Assert.Contains("no host", result.Message);
-        Assert.Contains("administrator", result.FixDescription);
+        Assert.Contains("skip this fix", result.Message);
         Assert.Empty(_elevated.Calls);
     }
 
@@ -104,10 +106,9 @@ public class FirewallCheckTests
         var result = await Check().RunAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
-        Assert.Contains("inbound", result.Message);
+        Assert.Contains("inbound traffic", result.Message);
         Assert.DoesNotContain("outbound", result.Message);
-        Assert.Contains("no host", result.Message);
-        Assert.Contains("administrator", result.FixDescription);
+        Assert.Contains("skip this fix", result.Message);
     }
 
     [Fact]
@@ -119,11 +120,35 @@ public class FirewallCheckTests
         var result = await Check().RunAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
-        Assert.Contains("inbound", result.Message);
-        Assert.Contains("outbound", result.Message);
-        Assert.Contains("no host", result.Message);
-        Assert.Contains("administrator", result.FixDescription);
+        Assert.Contains("rules are missing", result.Message);
+        Assert.Contains("skip this fix", result.Message);
         Assert.Empty(_elevated.Calls);
+    }
+
+    [Fact]
+    public async Task Says_only_what_it_knows_and_does_not_claim_that_MM2_is_blocked()
+    {
+        Missing(InboundName);
+        Missing(OutboundName);
+
+        var result = await Check().RunAsync(default);
+
+        Assert.Contains("MM2 Lobby firewall rule", result.Message);
+        Assert.DoesNotContain("No firewall rule allows MM2", result.Message);
+        Assert.Contains("If MM2 already finds hosts", result.Message);
+    }
+
+    [Fact]
+    public async Task Tells_the_player_why_the_rules_matter_and_how_many_prompts_to_expect()
+    {
+        Missing(InboundName);
+        Missing(OutboundName);
+
+        var result = await Check().RunAsync(default);
+
+        Assert.Contains("no host", result.FixDescription);
+        Assert.Contains("Windows will ask for permission up to two times", result.FixDescription);
+        Assert.Contains("Choose Yes each time", result.FixDescription);
     }
 
     [Fact]
@@ -172,20 +197,28 @@ public class FirewallCheckTests
         var result = await Check().RunAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
-        Assert.Contains("outbound", result.Message);
+        Assert.Contains("outbound traffic", result.Message);
     }
 
-    // The fix tests use FakeFirewall, which models the rule table. A fix that
+    // The fix tests use FakeFirewall, which holds the rule table. A fix that
     // changes a rule must change it in that table, and the final check reads it.
     private FirewallCheck CheckOn(FakeFirewall firewall) => new(firewall.Plain, firewall.Elevated, _config);
 
     private static FakeFirewall.Rule Rule(string name, string direction, string program = GamePath)
         => new(name, direction, program);
 
-    [Fact]
-    public async Task FixAsync_adds_both_rules_and_deletes_nothing_when_no_rule_exists()
+    private static FakeFirewall WithRules(bool inbound, bool outbound, string program = GamePath)
     {
         var firewall = new FakeFirewall();
+        if (inbound) firewall.Rules.Add(Rule(InboundName, "in", program));
+        if (outbound) firewall.Rules.Add(Rule(OutboundName, "out", program));
+        return firewall;
+    }
+
+    [Fact]
+    public async Task FixAsync_adds_both_rules_when_no_rule_exists()
+    {
+        var firewall = WithRules(inbound: false, outbound: false);
 
         var result = await CheckOn(firewall).FixAsync(default);
 
@@ -194,58 +227,63 @@ public class FirewallCheckTests
     }
 
     [Fact]
-    public async Task FixAsync_deletes_only_the_inbound_rule_when_only_that_rule_exists()
+    public async Task FixAsync_changes_the_inbound_rule_and_adds_the_outbound_rule_when_only_the_inbound_rule_exists()
     {
-        var firewall = new FakeFirewall();
-        firewall.Rules.Add(Rule(InboundName, "in"));
+        var firewall = WithRules(inbound: true, outbound: false);
 
         var result = await CheckOn(firewall).FixAsync(default);
 
-        Assert.Equal(
-            new[] { DeleteInbound, AddInbound(), AddOutbound() }, firewall.ElevatedCalls);
+        Assert.Equal(new[] { SetInbound(), AddOutbound() }, firewall.ElevatedCalls);
         Assert.Equal(CheckStatus.Pass, result.Status);
     }
 
     [Fact]
-    public async Task FixAsync_deletes_only_the_outbound_rule_when_only_that_rule_exists()
+    public async Task FixAsync_adds_the_inbound_rule_and_changes_the_outbound_rule_when_only_the_outbound_rule_exists()
     {
-        var firewall = new FakeFirewall();
-        firewall.Rules.Add(Rule(OutboundName, "out"));
+        var firewall = WithRules(inbound: false, outbound: true);
 
         var result = await CheckOn(firewall).FixAsync(default);
 
-        Assert.Equal(
-            new[] { AddInbound(), DeleteOutbound, AddOutbound() }, firewall.ElevatedCalls);
+        Assert.Equal(new[] { AddInbound(), SetOutbound() }, firewall.ElevatedCalls);
         Assert.Equal(CheckStatus.Pass, result.Status);
     }
 
     [Fact]
-    public async Task FixAsync_deletes_each_rule_then_adds_it_when_both_rules_exist()
+    public async Task FixAsync_changes_both_rules_in_place_when_both_rules_exist()
     {
-        var firewall = new FakeFirewall();
-        firewall.Rules.Add(Rule(InboundName, "in"));
-        firewall.Rules.Add(Rule(OutboundName, "out"));
+        var firewall = WithRules(inbound: true, outbound: true);
 
         var result = await CheckOn(firewall).FixAsync(default);
 
-        Assert.Equal(
-            new[] { DeleteInbound, AddInbound(), DeleteOutbound, AddOutbound() },
-            firewall.ElevatedCalls);
+        Assert.Equal(new[] { SetInbound(), SetOutbound() }, firewall.ElevatedCalls);
         Assert.Equal(CheckStatus.Pass, result.Status);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task FixAsync_asks_for_permission_two_times_at_most(bool inbound, bool outbound)
+    {
+        var firewall = WithRules(inbound, outbound);
+
+        await CheckOn(firewall).FixAsync(default);
+
+        Assert.Equal(2, firewall.ElevatedCalls.Count());
+    }
+
     [Fact]
-    public async Task FixAsync_replaces_a_rule_that_names_an_old_program_path()
+    public async Task FixAsync_gives_a_rule_that_names_an_old_program_path_the_new_path_and_never_deletes_it()
     {
         const string old = @"D:\Old\midtown2.exe";
-        var firewall = new FakeFirewall();
-        firewall.Rules.Add(Rule(InboundName, "in", old));
-        firewall.Rules.Add(Rule(OutboundName, "out", old));
+        var firewall = WithRules(inbound: true, outbound: true, program: old);
 
         await CheckOn(firewall).FixAsync(default);
 
         Assert.Equal(2, firewall.Rules.Count);
         Assert.All(firewall.Rules, rule => Assert.Equal(GamePath, rule.Program));
+        Assert.DoesNotContain(firewall.Log, call => call.Contains("delete", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -273,46 +311,41 @@ public class FirewallCheckTests
     }
 
     [Fact]
-    public async Task FixAsync_reports_a_failure_when_netsh_accepts_the_rules_but_does_not_list_them()
+    public async Task FixAsync_says_something_new_when_netsh_accepts_the_commands_but_the_rules_are_still_missing()
     {
         var firewall = new FakeFirewall { AddsAreIgnored = true };
+        var check = CheckOn(firewall);
+        var before = await check.RunAsync(default);
 
-        var result = await CheckOn(firewall).FixAsync(default);
+        var result = await check.FixAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Equal(2, firewall.ElevatedCalls.Count());
+        Assert.Contains("accepted the commands", result.Message);
+        Assert.NotEqual(before.Message, result.Message);
+        Assert.NotEqual(before.FixDescription, result.FixDescription);
+        Assert.Contains("Check again", result.FixDescription);
     }
 
     [Fact]
-    public async Task FixAsync_reports_the_exit_code_and_the_manual_command_when_the_inbound_rule_fails()
+    public async Task FixAsync_names_the_inbound_rule_and_blames_the_prompt_when_a_command_returns_127()
     {
         var firewall = new FakeFirewall();
-        firewall.AddFails[InboundName] = 1;
+        firewall.AddFails[InboundName] = 127;
 
         var result = await CheckOn(firewall).FixAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
-        Assert.Contains("exit code 1", result.Message);
-        Assert.Contains("in rule", result.Message);
-        Assert.Contains("administrator prompt", result.Message);
+        Assert.Contains("did not add the inbound rule", result.Message);
+        Assert.DoesNotContain("in rule", result.Message);
+        Assert.Contains("exit code 127", result.Message);
+        Assert.Contains("If you chose No at the permission prompt, that is the cause", result.Message);
+        Assert.Contains("Press Fix again", result.FixDescription);
         Assert.Contains("netsh " + Arguments(AddInbound()), result.FixDescription);
     }
 
     [Fact]
-    public async Task FixAsync_does_not_touch_the_outbound_rule_after_the_inbound_rule_fails()
-    {
-        var firewall = new FakeFirewall();
-        firewall.Rules.Add(Rule(OutboundName, "out"));
-        firewall.AddFails[InboundName] = 1;
-
-        await CheckOn(firewall).FixAsync(default);
-
-        Assert.Equal(new[] { AddInbound() }, firewall.ElevatedCalls);
-        Assert.Single(firewall.Rules);
-    }
-
-    [Fact]
-    public async Task FixAsync_names_the_outbound_rule_when_only_that_rule_fails()
+    public async Task FixAsync_reports_the_exit_code_and_does_not_blame_the_prompt_for_another_code()
     {
         var firewall = new FakeFirewall();
         firewall.AddFails[OutboundName] = 5;
@@ -320,29 +353,103 @@ public class FirewallCheckTests
         var result = await CheckOn(firewall).FixAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("did not add the outbound rule", result.Message);
+        Assert.DoesNotContain("out rule", result.Message);
         Assert.Contains("exit code 5", result.Message);
-        Assert.Contains("out rule", result.Message);
+        Assert.Contains("The command failed", result.Message);
+        Assert.DoesNotContain("permission prompt", result.Message);
         Assert.Contains("netsh " + Arguments(AddOutbound()), result.FixDescription);
-        Assert.Equal(new[] { AddInbound(), AddOutbound() }, firewall.ElevatedCalls);
     }
 
     [Fact]
-    public async Task FixAsync_stops_at_a_delete_that_fails_and_gives_the_manual_command()
+    public async Task FixAsync_names_a_failed_change_of_the_outbound_rule()
     {
-        // The app deletes only a rule that exists. So a failed delete is a
-        // real failure, for example a refused administrator prompt.
-        var firewall = new FakeFirewall();
-        firewall.Rules.Add(Rule(InboundName, "in", @"D:\Old\midtown2.exe"));
-        firewall.DeleteFails[InboundName] = 1223;
+        var firewall = WithRules(inbound: true, outbound: true);
+        firewall.SetFails[OutboundName] = 127;
 
         var result = await CheckOn(firewall).FixAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
-        Assert.Equal(new[] { DeleteInbound }, firewall.ElevatedCalls);
-        Assert.Contains("exit code 1223", result.Message);
-        Assert.Contains("in rule", result.Message);
-        Assert.Contains("administrator prompt", result.Message);
-        Assert.Contains("netsh " + Arguments(DeleteInbound), result.FixDescription);
+        Assert.Contains("did not update the outbound rule", result.Message);
+        Assert.Contains("exit code 127", result.Message);
+        Assert.Contains("netsh " + Arguments(SetOutbound()), result.FixDescription);
+        Assert.Equal(new[] { SetInbound(), SetOutbound() }, firewall.ElevatedCalls);
+    }
+
+    [Fact]
+    public async Task FixAsync_names_a_failed_change_of_the_inbound_rule_and_leaves_the_outbound_rule_alone()
+    {
+        var firewall = WithRules(inbound: true, outbound: true);
+        firewall.SetFails[InboundName] = 127;
+
+        var result = await CheckOn(firewall).FixAsync(default);
+
+        Assert.Equal(new[] { SetInbound() }, firewall.ElevatedCalls);
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("did not update the inbound rule", result.Message);
+    }
+
+    [Fact]
+    public async Task FixAsync_keeps_the_changed_inbound_rule_and_the_old_outbound_rule_when_the_second_change_fails()
+    {
+        const string old = @"D:\Old\midtown2.exe";
+        var firewall = WithRules(inbound: true, outbound: true, program: old);
+        firewall.SetFails[OutboundName] = 127;
+
+        await CheckOn(firewall).FixAsync(default);
+
+        Assert.Equal(GamePath, firewall.Rules.Single(rule => rule.Name == InboundName).Program);
+        Assert.Equal(old, firewall.Rules.Single(rule => rule.Name == OutboundName).Program);
+    }
+
+    [Fact]
+    public async Task FixAsync_keeps_the_changed_inbound_rule_when_the_add_of_the_outbound_rule_fails()
+    {
+        const string old = @"D:\Old\midtown2.exe";
+        var firewall = WithRules(inbound: true, outbound: false, program: old);
+        firewall.AddFails[OutboundName] = 127;
+
+        var result = await CheckOn(firewall).FixAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Equal(new[] { SetInbound(), AddOutbound() }, firewall.ElevatedCalls);
+        Assert.Equal(GamePath, Assert.Single(firewall.Rules).Program);
+    }
+
+    [Theory]
+    [InlineData(false, false, InboundName)]
+    [InlineData(false, false, OutboundName)]
+    [InlineData(true, false, InboundName)]
+    [InlineData(true, false, OutboundName)]
+    [InlineData(false, true, InboundName)]
+    [InlineData(false, true, OutboundName)]
+    [InlineData(true, true, InboundName)]
+    [InlineData(true, true, OutboundName)]
+    public async Task FixAsync_never_leaves_fewer_rules_than_it_found_when_a_command_fails(
+        bool inbound, bool outbound, string failingRule)
+    {
+        var firewall = WithRules(inbound, outbound);
+        firewall.AddFails[failingRule] = 127;
+        firewall.SetFails[failingRule] = 127;
+        var found = firewall.Rules.Count;
+
+        var result = await CheckOn(firewall).FixAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.True(firewall.Rules.Count >= found, "A failed fix removed a rule.");
+        Assert.True(!inbound || firewall.Rules.Any(rule => rule.Name == InboundName));
+        Assert.True(!outbound || firewall.Rules.Any(rule => rule.Name == OutboundName));
+    }
+
+    [Fact]
+    public async Task FixAsync_does_not_touch_the_outbound_rule_after_the_inbound_rule_fails()
+    {
+        var firewall = WithRules(inbound: false, outbound: true);
+        firewall.AddFails[InboundName] = 127;
+
+        await CheckOn(firewall).FixAsync(default);
+
+        Assert.Equal(new[] { AddInbound() }, firewall.ElevatedCalls);
     }
 
     [Theory]

@@ -59,8 +59,8 @@ public static class GameLocator
         using var key = Registry.LocalMachine.OpenSubKey(RegistryKey);
         if (key is null) return null;
 
-        // A loop, not a lambda: the platform analyzer does not follow the
-        // OperatingSystem guard into a lambda.
+        // The code uses a loop and not a lambda. The platform analyzer does
+        // not follow the OperatingSystem guard into a lambda.
         var values = new List<string>();
         foreach (var name in key.GetValueNames())
         {

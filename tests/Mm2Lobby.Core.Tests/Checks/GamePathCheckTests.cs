@@ -219,7 +219,8 @@ public class GamePathCheckTests : IDisposable
     }
 
     // A store whose file is a folder. ConfigStore.Save cannot move the new file
-    // onto the folder. Windows reports this as UnauthorizedAccessException.
+    // onto the folder. The exception type depends on the operating system, and
+    // the check catches both types that this test can meet.
     private GamePathCheck CheckWithFolderInPlaceOfTheFile()
     {
         Directory.CreateDirectory(Path.Combine(_folder, "config.json"));
@@ -263,45 +264,67 @@ public class GamePathCheckTests : IDisposable
         Assert.Contains("cannot save", result.Message);
     }
 
-    [Fact]
-    public async Task FixAsync_reports_a_failed_fix_when_the_settings_folder_is_read_only()
+    // The seam replaces the save with one that throws. This is the only way to
+    // test UnauthorizedAccessException on every operating system.
+    private GamePathCheck CheckWhoseSaveThrows(Type exceptionType)
+        => new(
+            _config,
+            _ => throw (Exception)Activator.CreateInstance(exceptionType, "the disk says no")!,
+            () => _registryAnswer,
+            () => _pickerAnswer);
+
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    public async Task FixAsync_reports_a_failed_fix_for_each_exception_that_a_save_can_throw(
+        Type exceptionType)
     {
-        // ConfigStore.Save throws UnauthorizedAccessException when it cannot
-        // write into the folder. A folder with no write permission shows this
-        // on Unix. Windows ignores the Unix mode, and root ignores it too.
-        // So the test does nothing on those systems.
-        if (OperatingSystem.IsWindows() || Environment.UserName == "root") return;
+        var old = CreateFile(Path.Combine("old", "midtown2.exe"));
+        _config.GamePath = old;
+        _pickerAnswer = CreateFile(Path.Combine("picked", "midtown2.exe"));
 
-        var readOnly = Directory.CreateDirectory(Path.Combine(_folder, "readonly"));
-        var store = new ConfigStore(Path.Combine(readOnly.FullName, "config.json"));
-        var check = new GamePathCheck(_config, store, () => null,
-            () => CreateFile(Path.Combine("picked", "midtown2.exe")));
-        File.SetUnixFileMode(readOnly.FullName, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        var result = await CheckWhoseSaveThrows(exceptionType).FixAsync(default);
 
-        try
-        {
-            var result = await check.FixAsync(default);
-
-            Assert.Equal(CheckStatus.Fail, result.Status);
-            Assert.Contains("cannot save", result.Message);
-            Assert.Equal(string.Empty, _config.GamePath);
-        }
-        finally
-        {
-            File.SetUnixFileMode(readOnly.FullName, UnixFileMode.UserRead
-                | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("cannot save the path: the disk says no", result.Message);
+        Assert.Equal(old, _config.GamePath);
     }
 
-    [Fact]
-    public async Task RunAsync_keeps_the_old_game_path_when_the_save_fails()
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    public async Task RunAsync_reports_the_same_failed_fix_when_the_registry_path_cannot_be_saved(
+        Type exceptionType)
     {
         _registryAnswer = CreateFile(Path.Combine("registry", "midtown2.exe"));
 
-        await Assert.ThrowsAnyAsync<IOException>(
-            () => CheckWithUnwritableStore().RunAsync(default));
+        var result = await CheckWhoseSaveThrows(exceptionType).RunAsync(default);
 
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("cannot save the path: the disk says no", result.Message);
+        Assert.Contains("settings folder", result.FixDescription);
         Assert.Equal(string.Empty, _config.GamePath);
+    }
+
+    [Fact]
+    public async Task RunAsync_reports_a_failed_save_through_a_real_store_too()
+    {
+        _registryAnswer = CreateFile(Path.Combine("registry", "midtown2.exe"));
+
+        var result = await CheckWithUnwritableStore().RunAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("cannot save", result.Message);
+        Assert.Equal(string.Empty, _config.GamePath);
+    }
+
+    [Fact]
+    public async Task Does_not_catch_an_exception_that_is_not_a_failed_save()
+    {
+        _pickerAnswer = CreateFile(Path.Combine("picked", "midtown2.exe"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await CheckWhoseSaveThrows(typeof(InvalidOperationException)).FixAsync(default));
     }
 
     [Fact]

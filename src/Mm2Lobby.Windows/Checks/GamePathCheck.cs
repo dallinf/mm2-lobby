@@ -12,7 +12,7 @@ namespace Mm2Lobby.Windows.Checks;
 public sealed class GamePathCheck : ICheck
 {
     private readonly AppConfig _config;
-    private readonly ConfigStore _configStore;
+    private readonly Action<AppConfig> _save;
     private readonly Func<string?> _readGamePathFromRegistry;
     private readonly Func<string?> _askTheUser;
 
@@ -29,9 +29,22 @@ public sealed class GamePathCheck : ICheck
         ConfigStore configStore,
         Func<string?> readGamePathFromRegistry,
         Func<string?> askTheUser)
+        : this(config, configStore.Save, readGamePathFromRegistry, askTheUser)
+    {
+    }
+
+    /// <summary>
+    /// This constructor lets a test replace the save. ConfigStore is a sealed
+    /// class, so a test cannot make it throw every kind of exception.
+    /// </summary>
+    internal GamePathCheck(
+        AppConfig config,
+        Action<AppConfig> save,
+        Func<string?> readGamePathFromRegistry,
+        Func<string?> askTheUser)
     {
         _config = config;
-        _configStore = configStore;
+        _save = save;
         _readGamePathFromRegistry = readGamePathFromRegistry;
         _askTheUser = askTheUser;
     }
@@ -50,8 +63,8 @@ public sealed class GamePathCheck : ICheck
         var found = _readGamePathFromRegistry();
         if (GameLocator.IsTheGame(found))
         {
-            Save(found!);
-            return Task.FromResult(Pass(found!));
+            var failure = TrySave(found!);
+            return Task.FromResult(failure ?? Pass(found!));
         }
 
         return Task.FromResult(new CheckResult(
@@ -83,27 +96,35 @@ public sealed class GamePathCheck : ICheck
                 $"Choose {GameLocator.Executable} in the folder where you installed Midtown Madness 2."));
         }
 
+        return Task.FromResult(TrySave(chosen) ?? Pass(chosen));
+    }
+
+    /// <summary>
+    /// This method returns null when the save works. It returns a failed result
+    /// when the save throws an IOException or an UnauthorizedAccessException.
+    /// </summary>
+    private CheckResult? TrySave(string path)
+    {
         try
         {
-            Save(chosen);
+            Save(path);
+            return null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return Task.FromResult(new CheckResult(
+            return new CheckResult(
                 Name,
                 CheckStatus.Fail,
                 $"The app found {GameLocator.Executable} but cannot save the path: {e.Message}",
                 "Make sure the app can write to its settings folder. "
-                    + $"Then choose {GameLocator.Executable} again."));
+                    + $"Then choose {GameLocator.Executable} again.");
         }
-
-        return Task.FromResult(Pass(chosen));
     }
 
     /// <summary>
     /// This method changes the shared configuration and saves it. If the save
-    /// fails, the method restores the old path and throws the exception again.
-    /// So a failed save leaves the memory and the file in the same state.
+    /// throws an exception, the method restores the old path and throws the
+    /// same exception again. So the memory and the file keep the same path.
     /// </summary>
     private void Save(string path)
     {
@@ -112,7 +133,7 @@ public sealed class GamePathCheck : ICheck
 
         try
         {
-            _configStore.Save(_config);
+            _save(_config);
         }
         catch
         {

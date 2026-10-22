@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Mm2Lobby.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Mm2Lobby.Core\Mm2Lobby.Core.csproj" />
   </ItemGroup>
 

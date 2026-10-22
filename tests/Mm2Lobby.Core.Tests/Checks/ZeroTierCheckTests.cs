@@ -36,7 +36,8 @@ public class ZeroTierCheckTests
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("https://www.zerotier.com/download/", result.FixDescription);
-        Assert.Contains("service", result.FixDescription);
+        Assert.Contains("Open Windows Services", result.FixDescription);
+        Assert.Contains("ZeroTier One", result.FixDescription);
         Assert.Contains("authentication token", result.Message);
         Assert.Contains("run it as an administrator", result.FixDescription);
         Assert.Null(_zeroTier.RequestedNetworkId);
@@ -96,6 +97,20 @@ public class ZeroTierCheckTests
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains(status, result.Message);
         Assert.Contains(expectedInFix, result.FixDescription);
+    }
+
+    [Fact]
+    public async Task Tells_the_player_to_update_ZeroTier_when_the_status_is_CLIENT_TOO_OLD()
+    {
+        _zeroTier.Network = new ZeroTierNetwork(NetworkId, "CLIENT_TOO_OLD", null, 0);
+
+        var result = await Check().RunAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("CLIENT_TOO_OLD", result.Message);
+        Assert.Contains("Update ZeroTier", result.FixDescription);
+        Assert.Contains("https://www.zerotier.com/download/", result.FixDescription);
+        Assert.DoesNotContain("Wait", result.FixDescription);
     }
 
     [Fact]

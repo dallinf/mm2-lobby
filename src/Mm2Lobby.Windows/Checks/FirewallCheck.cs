@@ -5,16 +5,19 @@ using Mm2Lobby.Core.Processes;
 namespace Mm2Lobby.Windows.Checks;
 
 /// <summary>
-/// This check matters most. When the firewall blocks the game, MM2 fails
-/// silently and reports only that it found no host. The check reads the game
-/// path from the shared AppConfig when it adds the rules.
+/// This check looks for the two firewall rules that this app adds. When the
+/// firewall blocks the game, MM2 fails silently and reports only that it found
+/// no host. The check reads the game path from the shared AppConfig when the
+/// fix writes the rules.
 /// </summary>
 /// <remarks>
-/// The app keeps one rule for each direction, each with its own name. So the
-/// check can see that only one direction is open. It does this without a
-/// parse of the netsh output, which Windows translates into the language of
-/// the user. The check cannot see that a rule names an old program path. The
-/// fix deletes each rule and adds it again, so the fix repairs that case.
+/// The app keeps one rule for each direction, and each rule has its own name.
+/// So the check can see that only one direction is missing. The check does not
+/// read the text of the netsh output, because Windows translates that text.
+/// The check sees only these two rules. A rule that Windows made when the user
+/// chose Allow at the firewall prompt is not visible to the check. The check
+/// also cannot see that a rule names an old program path. The fix changes each
+/// rule that exists, so the fix repairs that case.
 /// </remarks>
 public sealed class FirewallCheck : ICheck
 {
@@ -22,8 +25,7 @@ public sealed class FirewallCheck : ICheck
     public const string InboundRuleName = $"{RuleName} (inbound)";
     public const string OutboundRuleName = $"{RuleName} (outbound)";
 
-    private const string NoHost =
-        "Without it the game reports no host and gives no reason.";
+    private const string SkipHint = "If MM2 already finds hosts, you can skip this fix.";
 
     private readonly IProcessRunner _runner;
     private readonly IProcessRunner _elevatedRunner;
@@ -49,21 +51,26 @@ public sealed class FirewallCheck : ICheck
 
         if (inboundExists && outboundExists)
         {
-            return new CheckResult(Name, CheckStatus.Pass, "Both rules are in place.", null);
+            return new CheckResult(
+                Name, CheckStatus.Pass, "The MM2 Lobby firewall rules are in place.", null);
         }
 
         var message = (inboundExists, outboundExists) switch
         {
-            (true, false) => $"The outbound firewall rule for MM2 is missing. {NoHost}",
-            (false, true) => $"The inbound firewall rule for MM2 is missing. {NoHost}",
-            _ => $"No firewall rule allows MM2, inbound or outbound. {NoHost}",
+            (true, false) =>
+                $"The MM2 Lobby firewall rule for outbound traffic is missing. {SkipHint}",
+            (false, true) =>
+                $"The MM2 Lobby firewall rule for inbound traffic is missing. {SkipHint}",
+            _ => $"The MM2 Lobby firewall rules are missing. {SkipHint}",
         };
 
         return new CheckResult(
             Name,
             CheckStatus.Fail,
             message,
-            "Add an inbound and an outbound allow rule. This needs administrator rights.");
+            "Without these rules the firewall can block MM2, and then MM2 reports no host "
+                + "and gives no reason. The fix adds the missing rules. "
+                + "Windows will ask for permission up to two times. Choose Yes each time.");
     }
 
     public async Task<CheckResult> FixAsync(CancellationToken ct)
@@ -79,57 +86,54 @@ public sealed class FirewallCheck : ICheck
                 "Run the Midtown Madness 2 check first.");
         }
 
-        // Each elevated process shows one administrator prompt. The plain
-        // runner needs no prompt, so the app asks it which rules exist and
-        // deletes only those rules. The common case, a first run, deletes
-        // nothing and shows two prompts.
+        // Each elevated process shows one permission prompt. The plain runner
+        // needs no prompt, so the app asks it which rules exist. The app
+        // changes a rule that exists in place with a set command. The rule is
+        // never missing, so a refused prompt cannot remove a rule that works.
+        // The app adds a rule that does not exist. The fix therefore shows
+        // two prompts in every case.
         var inboundExists = await RuleExistsAsync(InboundRuleName, ct);
         var outboundExists = await RuleExistsAsync(OutboundRuleName, ct);
 
-        foreach (var (direction, ruleName, exists) in new[]
+        foreach (var (direction, word, ruleName, exists) in new[]
         {
-            ("in", InboundRuleName, inboundExists),
-            ("out", OutboundRuleName, outboundExists),
+            ("in", "inbound", InboundRuleName, inboundExists),
+            ("out", "outbound", OutboundRuleName, outboundExists),
         })
         {
-            // The app deletes the old rule first. A rule that names an old
-            // program path then cannot stay.
-            if (exists)
-            {
-                var deleteArguments = $"advfirewall firewall delete rule name=\"{ruleName}\"";
-                var deleted = await _elevatedRunner.RunAsync("netsh.exe", deleteArguments, ct);
-
-                // The rule existed a moment ago, so a non-zero exit code is a
-                // real failure, for example a refused administrator prompt.
-                if (!deleted.Succeeded)
-                {
-                    return new CheckResult(
-                        Name,
-                        CheckStatus.Fail,
-                        $"netsh did not delete the old {direction} rule (exit code {deleted.ExitCode}). "
-                            + "If you chose No at the administrator prompt, that is the cause.",
-                        "Open an administrator command prompt and run: netsh " + deleteArguments);
-                }
-            }
-
-            var arguments =
-                $"advfirewall firewall add rule name=\"{ruleName}\" "
-                + $"dir={direction} action=allow program=\"{path}\" enable=yes profile=any";
+            var arguments = exists
+                ? $"advfirewall firewall set rule name=\"{ruleName}\" dir={direction} "
+                    + $"new program=\"{path}\" action=allow enable=yes profile=any"
+                : $"advfirewall firewall add rule name=\"{ruleName}\" "
+                    + $"dir={direction} action=allow program=\"{path}\" enable=yes profile=any";
 
             var result = await _elevatedRunner.RunAsync("netsh.exe", arguments, ct);
 
             if (!result.Succeeded)
             {
+                var verb = exists ? "update" : "add";
+
                 return new CheckResult(
                     Name,
                     CheckStatus.Fail,
-                    $"netsh did not add the {direction} rule (exit code {result.ExitCode}). "
-                        + "If you chose No at the administrator prompt, that is the cause.",
-                    "Open an administrator command prompt and run: netsh " + arguments);
+                    ElevatedCommand.FailureMessage(
+                        $"netsh did not {verb} the {word} rule", result.ExitCode),
+                    ElevatedCommand.ManualFix("netsh " + arguments));
             }
         }
 
-        return await RunAsync(ct);
+        var recheck = await RunAsync(ct);
+        if (recheck.Status == CheckStatus.Pass) return recheck;
+
+        // The commands worked, but the rules are still not listed. This text
+        // must differ from the text that RunAsync returns. That text asks the
+        // player to do what the player has just done.
+        return new CheckResult(
+            Name,
+            CheckStatus.Fail,
+            "Windows accepted the commands, but it does not list the MM2 Lobby firewall rules.",
+            "Choose Check again. If the rules are still missing, report this to the person "
+                + "who runs the group.");
     }
 
     private async Task<bool> RuleExistsAsync(string ruleName, CancellationToken ct)

@@ -4,21 +4,35 @@ using Mm2Lobby.Core.Processes;
 namespace Mm2Lobby.Core.Tests.Fakes;
 
 /// <summary>
-/// This fake models the rule table of the Windows Firewall and the two runners
-/// that reach it. It refuses what the real runners refuse:
-/// the plain runner cannot add or delete a rule (netsh needs administrator
-/// rights and returns exit code 1); the elevated runner returns no output, so
-/// an elevated show gives the check nothing to read but the exit code; netsh returns exit code 1
-/// to delete a rule that does not exist; netsh adds a second rule of the same
-/// name and does not replace the first; and Process.Start throws for an empty
-/// file name. A rule keeps the program path that its add command gave.
+/// This fake holds a table of firewall rules and two runners that reach it.
+/// It refuses what the real tools refuse. The plain runner cannot add or
+/// change a rule, because netsh needs administrator rights for that. The
+/// elevated runner returns the exit code but no output. Netsh answers exit
+/// code 1 for a command with a missing or unknown parameter, and for a set
+/// command that matches no rule. A second add command with one name makes a second rule.
+/// Process.Start throws for an empty file name.
 /// </summary>
+/// <remarks>
+/// The fake accepts only the options that the app sends: action=allow,
+/// enable=yes and profile=any. The set command uses the name and the optional
+/// dir to select rules. The words after new give the new values. The set
+/// command changes a rule in place, so the rule is never missing. These are
+/// assumptions. The Windows script must confirm them.
+/// </remarks>
 public sealed class FakeFirewall
 {
-    private static readonly Regex Command = new(
-        "^advfirewall firewall (?<verb>show|delete|add) rule name=\"(?<name>[^\"]+)\""
-        + "(?: dir=(?<dir>in|out) action=allow program=\"(?<program>[^\"]+)\" enable=yes profile=any)?$",
-        RegexOptions.Compiled);
+    private const string Quoted = "\"(?<{0}>[^\"]+)\"";
+
+    private static readonly Regex Show = Build(
+        $"show rule name={string.Format(Quoted, "name")}");
+
+    private static readonly Regex Add = Build(
+        $"add rule name={string.Format(Quoted, "name")} dir=(?<dir>in|out) action=allow "
+        + $"program={string.Format(Quoted, "program")}( enable=yes)?( profile=any)?");
+
+    private static readonly Regex Set = Build(
+        $"set rule name={string.Format(Quoted, "name")}( dir=(?<dir>in|out))? "
+        + $"new program={string.Format(Quoted, "program")}( action=allow)?( enable=yes)?( profile=any)?");
 
     public sealed record Rule(string Name, string Direction, string Program);
 
@@ -41,14 +55,17 @@ public sealed class FakeFirewall
 
     public IEnumerable<string> ElevatedCalls => Calls("elevated: ");
 
-    /// <summary>The exit code of an add for a rule name. The add changes nothing.</summary>
+    /// <summary>The exit code of an add command for a rule name. The rule table stays the same.</summary>
     public Dictionary<string, int> AddFails { get; } = new();
 
-    /// <summary>The exit code of a delete for a rule name. The delete changes nothing.</summary>
-    public Dictionary<string, int> DeleteFails { get; } = new();
+    /// <summary>The exit code of a set command for a rule name. The rule table stays the same.</summary>
+    public Dictionary<string, int> SetFails { get; } = new();
 
-    /// <summary>A netsh that reports success for an add and creates no rule.</summary>
+    /// <summary>A netsh that reports success for an add command and creates no rule.</summary>
     public bool AddsAreIgnored { get; set; }
+
+    private static Regex Build(string pattern)
+        => new($"^advfirewall firewall {pattern}$", RegexOptions.Compiled);
 
     private IEnumerable<string> Calls(string prefix)
         => Log.Where(call => call.StartsWith(prefix, StringComparison.Ordinal))
@@ -79,27 +96,23 @@ public sealed class FakeFirewall
                 return Task.FromResult(new ProcessResult(127, "", "command not found"));
             }
 
-            var match = Command.Match(arguments);
-            if (!match.Success)
-            {
-                return Task.FromResult(Result(1, "The syntax supplied for this command is not valid.\r\n"));
-            }
+            return Task.FromResult(Dispatch(arguments));
+        }
 
-            var name = match.Groups["name"].Value;
+        private ProcessResult Dispatch(string arguments)
+        {
+            if (Show.Match(arguments) is { Success: true } show) return DoShow(show.Groups["name"].Value);
+            if (Add.Match(arguments) is { Success: true } add) return DoAdd(add);
+            if (Set.Match(arguments) is { Success: true } set) return DoSet(set);
 
-            return Task.FromResult(match.Groups["verb"].Value switch
-            {
-                "show" => Show(name),
-                "delete" => Delete(name),
-                _ => Add(name, match.Groups["dir"].Value, match.Groups["program"].Value),
-            });
+            return Result(1, "The syntax supplied for this command is not valid.\r\n");
         }
 
         // The elevated runner cannot capture output, so its result has none.
         private ProcessResult Result(int exitCode, string output)
             => _elevated ? new ProcessResult(exitCode, "", "") : new ProcessResult(exitCode, output, "");
 
-        private ProcessResult Show(string name)
+        private ProcessResult DoShow(string name)
         {
             var found = _firewall.Rules.Where(rule => rule.Name == name).ToList();
             if (found.Count == 0) return Result(1, "No rules match the specified criteria.\r\n");
@@ -108,23 +121,44 @@ public sealed class FakeFirewall
                 $"Rule Name:   {rule.Name}\r\nDirection:   {rule.Direction}\r\nProgram:   {rule.Program}\r\n\r\n")));
         }
 
-        private ProcessResult Delete(string name)
+        private ProcessResult DoAdd(Match match)
         {
             if (!_elevated) return Result(1, "The requested operation requires elevation.\r\n");
-            if (_firewall.DeleteFails.TryGetValue(name, out var code)) return Result(code, "");
 
-            return _firewall.Rules.RemoveAll(rule => rule.Name == name) > 0
-                ? Result(0, "Deleted rule(s).\r\n")
-                : Result(1, "No rules match the specified criteria.\r\n");
-        }
-
-        private ProcessResult Add(string name, string direction, string program)
-        {
-            if (!_elevated) return Result(1, "The requested operation requires elevation.\r\n");
+            var name = match.Groups["name"].Value;
             if (_firewall.AddFails.TryGetValue(name, out var code)) return Result(code, "");
 
-            if (!_firewall.AddsAreIgnored) _firewall.Rules.Add(new Rule(name, direction, program));
+            if (!_firewall.AddsAreIgnored)
+            {
+                _firewall.Rules.Add(new Rule(
+                    name, match.Groups["dir"].Value, match.Groups["program"].Value));
+            }
+
             return Result(0, "Ok.\r\n");
+        }
+
+        private ProcessResult DoSet(Match match)
+        {
+            if (!_elevated) return Result(1, "The requested operation requires elevation.\r\n");
+
+            var name = match.Groups["name"].Value;
+            if (_firewall.SetFails.TryGetValue(name, out var code)) return Result(code, "");
+
+            var direction = match.Groups["dir"].Value;
+            var matches = _firewall.Rules
+                .Select((rule, index) => (rule, index))
+                .Where(entry => entry.rule.Name == name
+                    && (direction.Length == 0 || entry.rule.Direction == direction))
+                .ToList();
+
+            if (matches.Count == 0) return Result(1, "No rules match the specified criteria.\r\n");
+
+            foreach (var (rule, index) in matches)
+            {
+                _firewall.Rules[index] = rule with { Program = match.Groups["program"].Value };
+            }
+
+            return Result(0, "Updated rule(s).\r\n");
         }
     }
 }

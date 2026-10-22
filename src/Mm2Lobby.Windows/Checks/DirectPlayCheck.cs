@@ -16,7 +16,7 @@ public sealed class DirectPlayCheck : ICheck
         "/online /enable-feature /featurename:DirectPlay /all /norestart";
 
     // DISM returns this code when the command worked and Windows needs a
-    // restart. With /norestart, DISM returns this code often.
+    // restart. DISM often returns this code when the command has /norestart.
     private const int RestartRequired = 3010;
 
     private readonly IProcessRunner _elevatedRunner;
@@ -42,7 +42,8 @@ public sealed class DirectPlayCheck : ICheck
             Name,
             CheckStatus.Fail,
             "Windows ships DirectPlay off, and MM2 needs it.",
-            "Turn on the DirectPlay Windows component. This needs administrator rights."));
+            "Turn on the DirectPlay Windows component. "
+                + "Windows will ask for permission one time. Choose Yes."));
     }
 
     public async Task<CheckResult> FixAsync(CancellationToken ct)
@@ -54,21 +55,30 @@ public sealed class DirectPlayCheck : ICheck
             return new CheckResult(
                 Name,
                 CheckStatus.Fail,
-                $"DISM did not finish (exit code {result.ExitCode}). "
-                    + "If you chose No at the administrator prompt, that is the cause.",
-                "Open an administrator command prompt and run: "
-                    + $"dism {EnableCommand}");
+                ElevatedCommand.FailureMessage("DISM did not finish", result.ExitCode),
+                ElevatedCommand.ManualFix($"dism {EnableCommand}"));
         }
 
         var recheck = await RunAsync(ct);
         if (recheck.Status == CheckStatus.Pass) return recheck;
 
-        // DISM finished, but Windows has not put the file in place. Windows
-        // does this until the next restart.
+        // Exit code 3010 means that DISM worked and Windows needs a restart.
+        // Only then does a restart help. Exit code 0 means that no restart is
+        // pending. The file is then missing for another reason, and the check
+        // may look for the file in the wrong place.
+        if (result.ExitCode == RestartRequired)
+        {
+            return new CheckResult(
+                Name,
+                CheckStatus.Fail,
+                "DISM finished, and Windows needs a restart to finish the work.",
+                "Restart Windows, then run the check again.");
+        }
+
         return new CheckResult(
             Name,
             CheckStatus.Fail,
-            "DISM finished, but Windows has not put the DirectPlay files in place yet.",
-            "Restart Windows, then run the check again.");
+            $"DISM reported success, but the app cannot find the DirectPlay file {FeatureLibrary}.",
+            "Report this to the person who runs the group. Say which version of Windows you use.");
     }
 }
