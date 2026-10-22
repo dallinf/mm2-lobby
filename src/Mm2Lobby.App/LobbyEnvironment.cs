@@ -35,6 +35,7 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
 
     private readonly ConfigStore _configStore;
     private readonly IZeroTierClient _zeroTier;
+    private readonly ZeroTierFaultReader _zeroTierFaults;
     private readonly IProcessRunner _plainRunner;
     private readonly IProcessRunner _elevatedRunner;
     private readonly Func<IPeerTransport> _createTransport;
@@ -46,6 +47,11 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
 
     /// <param name="configStore">The store for the one configuration file.</param>
     /// <param name="zeroTier">The client that reads ZeroTier.</param>
+    /// <param name="zeroTierCommand">
+    /// The ZeroTier command that the locator found. This is a value, not a
+    /// function. So the app reads the file system one time, at its start, and
+    /// not on every cycle of the lobby.
+    /// </param>
     /// <param name="plainRunner">Runs a program with the rights of the player.</param>
     /// <param name="elevatedRunner">Runs a program with administrator rights.</param>
     /// <param name="createTransport">
@@ -61,6 +67,7 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
     public LobbyEnvironment(
         ConfigStore configStore,
         IZeroTierClient zeroTier,
+        ZeroTierCommand zeroTierCommand,
         IProcessRunner plainRunner,
         IProcessRunner elevatedRunner,
         Func<IPeerTransport> createTransport,
@@ -73,6 +80,7 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
     {
         _configStore = configStore;
         _zeroTier = zeroTier;
+        _zeroTierFaults = new ZeroTierFaultReader(plainRunner, zeroTierCommand);
         _plainRunner = plainRunner;
         _elevatedRunner = elevatedRunner;
         _createTransport = createTransport;
@@ -94,7 +102,7 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
 
     public IReadOnlyList<CheckEntry> CreateChecks() => new[]
     {
-        new CheckEntry(new ZeroTierCheck(_zeroTier, Config)),
+        new CheckEntry(new ZeroTierCheck(_zeroTier, Config, _zeroTierFaults)),
         new CheckEntry(new DirectPlayCheck(_elevatedRunner)),
         new CheckEntry(new GamePathCheck(Config, _configStore, _findTheGame, _askForTheGame)),
         new CheckEntry(
@@ -128,9 +136,15 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
     {
         var plainRunner = new SystemProcessRunner();
 
+        // The app looks for the ZeroTier command one time, here. The Windows
+        // installer of ZeroTier does not add its folder to the search list of
+        // Windows, so the plain name zerotier-cli does not run on Windows.
+        var zeroTierCommand = ZeroTierCliLocator.Find();
+
         return new LobbyEnvironment(
             new ConfigStore(ConfigStore.DefaultPath),
-            new ZeroTierClient(plainRunner),
+            new ZeroTierClient(plainRunner, zeroTierCommand.FileName),
+            zeroTierCommand,
             plainRunner,
             new SystemProcessRunner(elevate: true),
             () => new UdpPeerTransport(),

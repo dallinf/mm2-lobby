@@ -1,6 +1,7 @@
 using System.Net;
 using Mm2Lobby.Core.Configuration;
 using Mm2Lobby.Core.Preflight;
+using Mm2Lobby.Core.Processes;
 using Mm2Lobby.Core.Tests.Fakes;
 using Mm2Lobby.Core.ZeroTier;
 using Mm2Lobby.Windows.Checks;
@@ -11,10 +12,33 @@ public class ZeroTierCheckTests
 {
     private const string NetworkId = "0123456789abcdef";
 
+    private const string Command = @"C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat";
+
+    private static readonly string[] Folders =
+    {
+        @"C:\Program Files (x86)\ZeroTier\One",
+        @"C:\Program Files\ZeroTier\One",
+    };
+
     private readonly FakeZeroTierClient _zeroTier = new();
     private readonly AppConfig _config = new() { ZeroTierNetworkId = NetworkId };
+    private readonly FakeProcessRunner _runner = new();
 
-    private ZeroTierCheck Check() => new(_zeroTier, _config);
+    private string _commandFile = Command;
+
+    public ZeroTierCheckTests()
+    {
+        // The command runs, and ZeroTier gives no answer. This is the state
+        // that every test below shares, apart from the two tests that name
+        // another fault.
+        _runner.Returns(
+            Command, "-j info", new ProcessResult(1, "", "the service is not running"));
+    }
+
+    private ZeroTierCheck Check() => new(
+        _zeroTier,
+        _config,
+        new ZeroTierFaultReader(_runner, new ZeroTierCommand(_commandFile, Folders)));
 
     [Fact]
     public async Task Passes_when_the_service_is_online_and_the_network_is_joined()
@@ -28,14 +52,13 @@ public class ZeroTierCheckTests
     }
 
     [Fact]
-    public async Task Fails_with_the_download_page_when_the_app_cannot_reach_ZeroTier()
+    public async Task Fails_with_the_Services_advice_when_ZeroTier_gives_no_answer()
     {
         _zeroTier.Status = null;
 
         var result = await Check().RunAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
-        Assert.Contains("https://www.zerotier.com/download/", result.FixDescription);
         Assert.Contains("type Services", result.FixDescription);
         Assert.Contains("ZeroTier One", result.FixDescription);
         Assert.Contains("Status column of ZeroTier One is blank", result.FixDescription);
@@ -43,6 +66,103 @@ public class ZeroTierCheckTests
         Assert.Contains("authentication token", result.Message);
         Assert.Contains("run it as an administrator", result.FixDescription);
         Assert.Null(_zeroTier.RequestedNetworkId);
+    }
+
+    /// <summary>
+    /// The real Windows run that found this defect: the name zerotier-cli does
+    /// not resolve, and the app reported a stopped service. The two faults have
+    /// two different fixes, so the text must keep them apart.
+    /// </summary>
+    [Fact]
+    public async Task Says_that_it_did_not_find_ZeroTier_and_names_the_folders()
+    {
+        _zeroTier.Status = null;
+
+        // The locator found no command file, so it kept the plain name. The
+        // runner does not know that name, so it answers NotRunExitCode.
+        _commandFile = "zerotier-cli";
+
+        var result = await Check().RunAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("did not find the ZeroTier command", result.Message);
+        Assert.Contains("zerotier-cli.bat", result.FixDescription);
+        Assert.Contains(Folders[0], result.FixDescription);
+        Assert.Contains(Folders[1], result.FixDescription);
+        Assert.Contains("https://www.zerotier.com/download/", result.FixDescription);
+        Assert.Null(_zeroTier.RequestedNetworkId);
+    }
+
+    [Fact]
+    public async Task Does_not_report_a_command_that_it_did_not_find_as_a_stopped_service()
+    {
+        _zeroTier.Status = null;
+        _commandFile = "zerotier-cli";
+
+        var result = await Check().RunAsync(default);
+
+        var text = result.Message + " " + result.FixDescription;
+        Assert.DoesNotContain("stopped", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("not running", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Services", text);
+    }
+
+    [Fact]
+    public async Task Names_no_folder_when_the_computer_holds_no_program_folder()
+    {
+        // macOS and Linux set neither program folder variable. The text must
+        // still read as a sentence.
+        _zeroTier.Status = null;
+        _commandFile = "zerotier-cli";
+
+        var check = new ZeroTierCheck(
+            _zeroTier,
+            _config,
+            new ZeroTierFaultReader(
+                _runner, new ZeroTierCommand("zerotier-cli", Array.Empty<string>())));
+
+        var result = await check.RunAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("did not find the ZeroTier command", result.Message);
+        Assert.Contains("found no folder of programs", result.FixDescription);
+        Assert.Contains("https://www.zerotier.com/download/", result.FixDescription);
+    }
+
+    [Fact]
+    public async Task Names_the_token_when_ZeroTier_refuses_the_command()
+    {
+        _zeroTier.Status = null;
+        _runner.Returns(
+            Command,
+            "-j info",
+            new ProcessResult(
+                ZeroTierFaultReader.TokenExitCode,
+                "authtoken.secret not found or readable in C:\\ProgramData\\ZeroTier\\One "
+                    + "(try again as root)",
+                ""));
+
+        var result = await Check().RunAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("authentication token", result.Message);
+        Assert.Contains("Run as administrator", result.FixDescription);
+
+        // ZeroTier runs. So the text must not send the player to the download
+        // page, and it must not send the player to the Services window.
+        Assert.DoesNotContain("https://www.zerotier.com/download/", result.FixDescription);
+        Assert.DoesNotContain("Services", result.FixDescription);
+    }
+
+    [Fact]
+    public async Task Runs_no_command_of_its_own_while_ZeroTier_answers()
+    {
+        // The fault reader runs the command one more time. It must do that on
+        // the failure path only.
+        var result = await Check().RunAsync(default);
+
+        Assert.Equal(CheckStatus.Pass, result.Status);
+        Assert.Empty(_runner.Calls);
     }
 
     [Fact]

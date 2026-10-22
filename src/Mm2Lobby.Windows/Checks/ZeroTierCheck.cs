@@ -23,35 +23,30 @@ public sealed class ZeroTierCheck : ICheck
 
     private readonly IZeroTierClient _zeroTier;
     private readonly AppConfig _config;
+    private readonly ZeroTierFaultReader _faults;
 
-    public ZeroTierCheck(IZeroTierClient zeroTier, AppConfig config)
+    /// <param name="zeroTier">The client that reads ZeroTier.</param>
+    /// <param name="config">The one configuration of the app.</param>
+    /// <param name="faults">
+    /// Reads the reason of a failure. The client answers null for every
+    /// failure, so the check needs this reader to name the right fix.
+    /// </param>
+    public ZeroTierCheck(
+        IZeroTierClient zeroTier, AppConfig config, ZeroTierFaultReader faults)
     {
         _zeroTier = zeroTier;
         _config = config;
+        _faults = faults;
     }
 
     public string Name => "ZeroTier";
 
     public async Task<CheckResult> RunAsync(CancellationToken ct)
     {
-        // zerotier-cli fails in three cases. ZeroTier is not installed, or its
-        // service is stopped, or the player cannot read the authentication token
-        // of the service. By default, Windows lets only an administrator read
-        // that token. The app sees the same failure in all three cases, so the
-        // fix text names all three.
         var status = await _zeroTier.GetStatusAsync(ct);
         if (status is null)
         {
-            return Fail(
-                "The app cannot reach ZeroTier. ZeroTier is not installed, its service is stopped, "
-                    + "or only an administrator can read the ZeroTier authentication token.",
-                "Press the Windows key, type Services, and open Services. "
-                    + "In the list, find ZeroTier One. "
-                    + $"If ZeroTier One is not in the list, install ZeroTier from {DownloadPage}. "
-                    + "If the Status column of ZeroTier One is blank, the service is stopped. "
-                    + "Right-click ZeroTier One and choose Start. "
-                    + "If the Status column says Running, close this app and run it as an administrator. "
-                    + "Then run the check again.");
+            return await DescribeTheFaultAsync(ct);
         }
 
         // The service answers, but it has no link to the ZeroTier servers.
@@ -91,6 +86,66 @@ public sealed class ZeroTierCheck : ICheck
     }
 
     public Task<CheckResult> FixAsync(CancellationToken ct) => RunAsync(ct);
+
+    /// <summary>
+    /// This method names the reason that ZeroTier gave no status, and the fix
+    /// for that one reason. The app ran with the name zerotier-cli alone until
+    /// now, and Windows does not find that name. The app then told the player
+    /// that the service was stopped, and the player looked for the wrong fix.
+    /// </summary>
+    private async Task<CheckResult> DescribeTheFaultAsync(CancellationToken ct)
+    {
+        var fault = await _faults.ReadAsync(ct);
+
+        return fault switch
+        {
+            ZeroTierFault.CommandNotFound => Fail(
+                "The app did not find the ZeroTier command on this computer.",
+                NotFoundFix()),
+
+            ZeroTierFault.PermissionDenied => Fail(
+                "ZeroTier refused the command. Only an administrator can read the "
+                    + "ZeroTier authentication token on this computer.",
+                "Close this app. "
+                    + "Right-click MM2 Lobby and choose Run as administrator. "
+                    + "Then run the check again. "
+                    + "If you cannot be an administrator on this computer, "
+                    + "ask the owner of the computer for help."),
+
+            _ => Fail(
+                "The app reached the ZeroTier command, and ZeroTier gave no answer. "
+                    + "The ZeroTier service is stopped, or only an administrator can read "
+                    + "the ZeroTier authentication token.",
+                "Press the Windows key, type Services, and open Services. "
+                    + "In the list, find ZeroTier One. "
+                    + "If the Status column of ZeroTier One is blank, the service is stopped. "
+                    + "Right-click ZeroTier One and choose Start. "
+                    + "If the Status column says Running, close this app and run it as an administrator. "
+                    + "Then run the check again."),
+        };
+    }
+
+    /// <summary>
+    /// This method names the folders that the app looked in. A computer that
+    /// is not Windows names no such folder, so the text has two forms.
+    /// </summary>
+    private string NotFoundFix()
+    {
+        var folders = _faults.Command.SearchedFolders;
+
+        var where = folders.Count == 0
+            ? "The app found no folder of programs on this computer. "
+            : $"The app looked for {ZeroTierCliLocator.WindowsCommandFile} in these folders: "
+                + string.Join("; ", folders) + ". ";
+
+        return where
+            + $"The app then tried the plain name {ZeroTierCliLocator.PlainCommand}, "
+            + "and Windows did not find it. "
+            + $"If ZeroTier is not on this computer, install ZeroTier from {DownloadPage}. "
+            + "If ZeroTier is on this computer, install ZeroTier again. "
+            + "Accept the folder that the installer offers. "
+            + "Then run the check again.";
+    }
 
     private CheckResult NotJoined(string networkId, ZeroTierNetwork network)
     {

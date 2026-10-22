@@ -1085,7 +1085,12 @@ public class LobbyViewModelTests : IDisposable
         _environment.ZeroTier = zeroTier;
         _environment.Config.ZeroTierNetworkId = string.Empty;
         _environment.Checks.Add(
-            new CheckEntry(new ZeroTierCheck(zeroTier, _environment.Config)));
+            new CheckEntry(new ZeroTierCheck(
+                zeroTier,
+                _environment.Config,
+                new ZeroTierFaultReader(
+                    new FakeProcessRunner(),
+                    new ZeroTierCommand("zerotier-cli", Array.Empty<string>())))));
 
         await using var model = Build();
         await model.StartAsync();

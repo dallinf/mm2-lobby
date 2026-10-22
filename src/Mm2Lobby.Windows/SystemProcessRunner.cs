@@ -22,10 +22,42 @@ public sealed class SystemProcessRunner : IProcessRunner
 
     public SystemProcessRunner(bool elevate = false) => _elevate = elevate;
 
+    /// <summary>
+    /// This method builds the program name and the argument text for one run.
+    /// The CreateProcess function of Windows does not run a batch file. So a
+    /// batch file goes to cmd.exe, and the name of the batch file becomes the
+    /// first argument. The /s switch makes cmd.exe remove the first and the
+    /// last quotation mark, and run the rest without a change. The path of
+    /// the batch file can hold a space, so the path keeps its own pair of
+    /// quotation marks.
+    /// </summary>
+    /// <remarks>
+    /// This method reads the extension of the name only. It asks for no
+    /// operating system, so a test can call it on macOS. A batch file has no
+    /// meaning on macOS, and the locator finds no batch file there.
+    /// </remarks>
+    internal static (string FileName, string Arguments) BuildCommandLine(
+        string fileName, string arguments)
+    {
+        var extension = Path.GetExtension(fileName);
+        var isBatch = extension.Equals(".bat", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase);
+
+        if (!isBatch) return (fileName, arguments);
+
+        var inner = arguments.Length == 0
+            ? $"\"{fileName}\""
+            : $"\"{fileName}\" {arguments}";
+
+        return ("cmd.exe", $"/s /c \"{inner}\"");
+    }
+
     public async Task<ProcessResult> RunAsync(
         string fileName, string arguments, CancellationToken ct)
     {
-        var info = new ProcessStartInfo(fileName, arguments)
+        var line = BuildCommandLine(fileName, arguments);
+
+        var info = new ProcessStartInfo(line.FileName, line.Arguments)
         {
             CreateNoWindow = true,
         };
