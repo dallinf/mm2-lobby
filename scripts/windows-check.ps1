@@ -648,10 +648,16 @@ if (Test-Path -LiteralPath $gameKey) {
     }
 }
 else {
-    Add-Result 'FAIL' 'The key does not exist.'
-    Add-Line '     The app then asks the player for the path, which still works. Please'
-    Add-Line '     tell the developer where midtown2.exe sits, and search the registry'
-    Add-Line '     for a better key.'
+    # A missing key is not a defect. The key holds a path only for a player
+    # who ran an installer. A player who copied the game folder has no key,
+    # and the app then opens a file picker. The picker is the real path.
+    Add-Result 'INFO' 'The key does not exist, and the app does not need it.'
+    Add-Line '     The key holds a path only for a player who ran an installer. If you'
+    Add-Line '     copied the game folder, Windows has no key for it.'
+    Add-Line '     Choose Fix on the Midtown Madness 2 row. The app then opens a file'
+    Add-Line '     picker. Point the picker at midtown2.exe. The app saves that path.'
+    Add-Line '     The app accepts a file named midtown2.exe only. Tell the developer'
+    Add-Line '     if your copy carries another name.'
 }
 
 # --- 5d netsh ------------------------------------------------------------
