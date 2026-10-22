@@ -71,8 +71,11 @@ public sealed class DirectPlayCheck : ICheck
             return new CheckResult(
                 Name,
                 CheckStatus.Fail,
-                "DISM finished, and Windows needs a restart to finish the work.",
-                "Restart Windows, then run the check again.");
+                "DISM turned DirectPlay on, and Windows needs a restart to finish the work.",
+                "Restart Windows, then run the check again. "
+                    + "The row above still reports a problem, because Windows "
+                    + "puts the DirectPlay files in place at the restart. "
+                    + "Do not choose Fix again.");
         }
 
         return new CheckResult(
