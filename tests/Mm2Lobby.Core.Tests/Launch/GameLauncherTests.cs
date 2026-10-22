@@ -82,7 +82,7 @@ public class GameLauncherTests
     [Fact]
     public void BuildPlan_makes_a_relative_path_absolute()
     {
-        var plan = GameLauncher.BuildPlan("midtown2.exe");
+        var plan = GameLauncher.BuildPlan(Path.Combine("mm2", "midtown2.exe"));
 
         Assert.True(Path.IsPathRooted(plan.ExecutablePath));
     }
