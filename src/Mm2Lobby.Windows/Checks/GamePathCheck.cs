@@ -83,14 +83,42 @@ public sealed class GamePathCheck : ICheck
                 $"Choose {GameLocator.Executable} in the folder where you installed Midtown Madness 2."));
         }
 
-        Save(chosen);
+        try
+        {
+            Save(chosen);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Task.FromResult(new CheckResult(
+                Name,
+                CheckStatus.Fail,
+                $"The app found {GameLocator.Executable} but cannot save the path: {e.Message}",
+                "Make sure the app can write to its settings folder. "
+                    + $"Then choose {GameLocator.Executable} again."));
+        }
+
         return Task.FromResult(Pass(chosen));
     }
 
+    /// <summary>
+    /// This method changes the shared configuration and saves it. If the save
+    /// fails, the method restores the old path and throws the exception again.
+    /// So a failed save leaves the memory and the file in the same state.
+    /// </summary>
     private void Save(string path)
     {
+        var previous = _config.GamePath;
         _config.GamePath = path;
-        _configStore.Save(_config);
+
+        try
+        {
+            _configStore.Save(_config);
+        }
+        catch
+        {
+            _config.GamePath = previous;
+            throw;
+        }
     }
 
     private CheckResult Pass(string path)

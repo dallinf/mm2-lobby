@@ -37,6 +37,8 @@ public class ZeroTierCheckTests
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("https://www.zerotier.com/download/", result.FixDescription);
         Assert.Contains("service", result.FixDescription);
+        Assert.Contains("authentication token", result.Message);
+        Assert.Contains("run it as an administrator", result.FixDescription);
         Assert.Null(_zeroTier.RequestedNetworkId);
     }
 

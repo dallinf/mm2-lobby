@@ -208,6 +208,102 @@ public class GamePathCheckTests : IDisposable
         Assert.False(File.Exists(ConfigFile));
     }
 
+    // A store whose folder is a file. ConfigStore.Save cannot create the folder
+    // and throws an IOException, on every operating system.
+    private GamePathCheck CheckWithUnwritableStore()
+    {
+        var blocker = CreateFile("blocker");
+        var store = new ConfigStore(Path.Combine(blocker, "config.json"));
+        return new GamePathCheck(
+            _config, store, () => _registryAnswer, () => _pickerAnswer);
+    }
+
+    // A store whose file is a folder. ConfigStore.Save cannot move the new file
+    // onto the folder. Windows reports this as UnauthorizedAccessException.
+    private GamePathCheck CheckWithFolderInPlaceOfTheFile()
+    {
+        Directory.CreateDirectory(Path.Combine(_folder, "config.json"));
+        return new GamePathCheck(
+            _config, _store, () => _registryAnswer, () => _pickerAnswer);
+    }
+
+    [Fact]
+    public async Task FixAsync_reports_a_failed_fix_when_the_configuration_cannot_be_saved()
+    {
+        _pickerAnswer = CreateFile(Path.Combine("picked", "midtown2.exe"));
+
+        var result = await CheckWithUnwritableStore().FixAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("cannot save", result.Message);
+        Assert.Matches(@"cannot save the path: \S", result.Message);
+        Assert.Contains("settings folder", result.FixDescription);
+    }
+
+    [Fact]
+    public async Task FixAsync_keeps_the_old_game_path_when_the_save_fails()
+    {
+        var old = CreateFile(Path.Combine("old", "midtown2.exe"));
+        _config.GamePath = old;
+        _pickerAnswer = CreateFile(Path.Combine("picked", "midtown2.exe"));
+
+        await CheckWithUnwritableStore().FixAsync(default);
+
+        Assert.Equal(old, _config.GamePath);
+    }
+
+    [Fact]
+    public async Task FixAsync_reports_a_failed_fix_when_the_configuration_file_is_a_folder()
+    {
+        _pickerAnswer = CreateFile(Path.Combine("picked", "midtown2.exe"));
+
+        var result = await CheckWithFolderInPlaceOfTheFile().FixAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("cannot save", result.Message);
+    }
+
+    [Fact]
+    public async Task FixAsync_reports_a_failed_fix_when_the_settings_folder_is_read_only()
+    {
+        // ConfigStore.Save throws UnauthorizedAccessException when it cannot
+        // write into the folder. A folder with no write permission shows this
+        // on Unix. Windows ignores the Unix mode, and root ignores it too.
+        // So the test does nothing on those systems.
+        if (OperatingSystem.IsWindows() || Environment.UserName == "root") return;
+
+        var readOnly = Directory.CreateDirectory(Path.Combine(_folder, "readonly"));
+        var store = new ConfigStore(Path.Combine(readOnly.FullName, "config.json"));
+        var check = new GamePathCheck(_config, store, () => null,
+            () => CreateFile(Path.Combine("picked", "midtown2.exe")));
+        File.SetUnixFileMode(readOnly.FullName, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+
+        try
+        {
+            var result = await check.FixAsync(default);
+
+            Assert.Equal(CheckStatus.Fail, result.Status);
+            Assert.Contains("cannot save", result.Message);
+            Assert.Equal(string.Empty, _config.GamePath);
+        }
+        finally
+        {
+            File.SetUnixFileMode(readOnly.FullName, UnixFileMode.UserRead
+                | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_keeps_the_old_game_path_when_the_save_fails()
+    {
+        _registryAnswer = CreateFile(Path.Combine("registry", "midtown2.exe"));
+
+        await Assert.ThrowsAnyAsync<IOException>(
+            () => CheckWithUnwritableStore().RunAsync(default));
+
+        Assert.Equal(string.Empty, _config.GamePath);
+    }
+
     [Fact]
     public void Has_the_name_Midtown_Madness_2()
     {
