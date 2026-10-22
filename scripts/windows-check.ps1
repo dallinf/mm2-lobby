@@ -202,7 +202,7 @@ Add-Line ''
 # with a smaller work area therefore puts the Host and Join buttons under the
 # taskbar, and the player cannot drag the window smaller to reach them.
 $MinimumWindowWidth  = 880
-$MinimumWindowHeight = 760
+$MinimumWindowHeight = 700
 
 try {
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
@@ -312,7 +312,7 @@ Add-Section '3. The build and the tests'
 # ---------------------------------------------------------------------------
 
 if (-not $canBuild) {
-    Add-Result 'SKIP' 'The script skipped the build, because section 2 failed.'
+    Add-Result 'SKIP' 'The script skipped the build. It has no repository, or no .NET 10 SDK.'
 }
 else {
     Push-Location $repoRoot
