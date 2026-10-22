@@ -145,6 +145,77 @@ public class ConfigStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save_gives_its_temporary_file_a_name_that_no_other_save_shares()
+    {
+        // The window and the pump both save. While both saves shared the name
+        // "config.json.tmp", one save could move a file that the other save
+        // still wrote, and the player lost every value in the file.
+        //
+        // This test puts a folder at the old shared name. A save that still
+        // used that name would try to write over a folder and would throw.
+        Directory.CreateDirectory(Path_ + ".tmp");
+
+        new ConfigStore(Path_).Save(new AppConfig { DisplayName = "dallin" });
+
+        Assert.Equal("dallin", new ConfigStore(Path_).Load().DisplayName);
+    }
+
+    [Fact]
+    public void Save_leaves_no_temporary_file_behind()
+    {
+        var store = new ConfigStore(Path_);
+        store.Save(new AppConfig { DisplayName = "dallin" });
+        store.Save(new AppConfig { DisplayName = "chris" });
+
+        Assert.Empty(Directory.GetFiles(_folder, "*.tmp"));
+    }
+
+    [Fact]
+    public async Task Many_saves_at_the_same_time_leave_a_file_that_Load_can_read()
+    {
+        // Every save completes, and the file holds one whole configuration.
+        // Without the lock, one thread moves a file that another thread still
+        // writes, and Load answers with the defaults.
+        var store = new ConfigStore(Path_);
+        var names = new[] { "dallin", "chris" };
+
+        var savers = names
+            .Select(name => Task.Run(() =>
+            {
+                for (var count = 0; count < 60; count++)
+                {
+                    store.Save(new AppConfig
+                    {
+                        DisplayName = name,
+                        ZeroTierNetworkId = "0123456789abcdef",
+                    });
+                }
+            }))
+            .ToArray();
+
+        await Task.WhenAll(savers);
+
+        var loaded = store.Load();
+        Assert.Contains(loaded.DisplayName, names);
+        Assert.Equal("0123456789abcdef", loaded.ZeroTierNetworkId);
+    }
+
+    [Fact]
+    public void A_save_that_fails_throws_and_leaves_the_target_as_it_was()
+    {
+        // GamePathCheck restores the old game path when the save throws, so
+        // Save must report a failure rather than hide it. A folder at the
+        // target makes the move fail.
+        Directory.CreateDirectory(Path_);
+
+        Assert.ThrowsAny<IOException>(
+            () => new ConfigStore(Path_).Save(new AppConfig { DisplayName = "dallin" }));
+
+        Assert.True(Directory.Exists(Path_));
+        Assert.Empty(Directory.GetFiles(_folder, "*.tmp"));
+    }
+
+    [Fact]
     public void DefaultPath_sits_under_the_application_data_folder()
     {
         Assert.Contains("Mm2Lobby", ConfigStore.DefaultPath);
