@@ -4,9 +4,20 @@
         x:Class="Mm2Lobby.App.MainWindow"
         x:Name="Root"
         x:DataType="app:LobbyViewModel"
-        Title="MM2 Lobby" Width="880" Height="660"
-        MinWidth="720" MinHeight="520"
+        Title="MM2 Lobby" Width="880" Height="760"
+        MinWidth="880" MinHeight="760"
         Closing="OnWindowClosing">
+
+  <!-- The worst case for the layout is the Setup panel open with four rows
+       that report a problem. A measurement of that case gives the minimum
+       size below.
+
+       The list of peers holds the one star row, so it takes the height that
+       the other rows leave. At 880 by 760 the panel is 421 high and the list
+       row gets 177, which holds about six peers. At 720 the messages wrap
+       further, the panel grows to 519, and the list row falls to 79. So the
+       width matters as much as the height, and the window does not go below
+       880 by 760. -->
 
   <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto">
 
