@@ -30,7 +30,8 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
         + "Defender Firewall and look at the rules for midtown2.exe. "
         + "A Block rule wins over the allow rules of this app. "
         + "An MM2 Lobby rule that you turned off also blocks the game. "
-        + "The check reads the name of a rule only, so it sees neither case.";
+        + "The check reads the name of a rule only. It does not see a Block "
+        + "rule, and it does not see a rule that you turned off.";
 
     private readonly ConfigStore _configStore;
     private readonly IZeroTierClient _zeroTier;

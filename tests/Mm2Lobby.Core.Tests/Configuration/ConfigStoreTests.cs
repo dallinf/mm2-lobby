@@ -254,13 +254,15 @@ public class ConfigStoreTests : IDisposable
         // that same file, and then reads that same file.
         //
         // A read-only folder makes the write of the temporary file fail. The
-        // name of that file holds a GUID, so a test cannot put anything in
-        // its way.
+        // name of that file holds a GUID, so a test cannot block that name.
         //
         // File.SetUnixFileMode works on macOS and on Linux. This test does
-        // nothing on Windows, where no test of this branch runs today. A test
-        // that runs as the root user also reads and writes a read-only
-        // folder, and then this test proves nothing.
+        // nothing on Windows, where no test of this branch runs today.
+        //
+        // The root user writes to a read-only folder, so the save below
+        // completes for that user. Then Record.Exception answers null, and
+        // the test fails at the assertion that follows. A root run therefore
+        // gives a red result. It does not give a quiet pass.
         if (OperatingSystem.IsWindows()) return;
 
         var store = new ConfigStore(Path_);
@@ -288,8 +290,8 @@ public class ConfigStoreTests : IDisposable
         }
 
         // GamePathCheck and LobbyService.RememberNames each catch IOException
-        // and UnauthorizedAccessException. A third type would leave both of
-        // them.
+        // and UnauthorizedAccessException. Neither method catches a third
+        // type, so a third type would stop each of them.
         Assert.NotNull(thrown);
         Assert.True(
             thrown is IOException or UnauthorizedAccessException,

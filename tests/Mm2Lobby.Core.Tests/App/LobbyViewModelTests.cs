@@ -255,9 +255,10 @@ public class LobbyViewModelTests : IDisposable
     [Fact]
     public async Task A_repair_that_works_closes_the_setup_list_and_keeps_its_report()
     {
-        // The firewall Repair is offered only while every check passes, so
-        // the checks pass again after it and the setup list closes itself.
-        // The window must therefore show FixMessage outside that list.
+        // The window offers the firewall Repair only while every check
+        // passes. The checks pass again after that repair, and the setup
+        // list then closes itself. So the window must show FixMessage
+        // outside that list.
         var check = new FakeCheck("Windows Firewall");
         _environment.Checks.Add(new CheckEntry(check, "The rule can name an old game folder."));
         check.OnFix = () => check.Message = "Windows accepted the commands.";

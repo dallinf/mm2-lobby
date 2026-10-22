@@ -599,9 +599,12 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     /// <summary>
     /// Turns the buttons off and says why. A button that the window disables
     /// tells the player nothing about the reason, and dism takes tens of
-    /// seconds. This method writes the message every time, because a fix and
-    /// the start that follows it both call it and Busy is already true for
-    /// the second call.
+    /// seconds.
+    ///
+    /// This method writes the message on every call. A fix calls this method.
+    /// The start that follows the fix calls this method again. Busy is
+    /// already true at that second call, so a setter alone would write
+    /// nothing.
     /// </summary>
     private void StartTheWork()
     {
