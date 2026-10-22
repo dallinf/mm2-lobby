@@ -242,7 +242,7 @@ public class GamePathCheckTests : IDisposable
     }
 
     [Fact]
-    public async Task FixAsync_keeps_the_old_game_path_when_the_save_fails()
+    public async Task FixAsync_keeps_the_old_game_path_when_the_store_cannot_write_the_file()
     {
         var old = CreateFile(Path.Combine("old", "midtown2.exe"));
         _config.GamePath = old;
@@ -264,9 +264,9 @@ public class GamePathCheckTests : IDisposable
         Assert.Contains("cannot save", result.Message);
     }
 
-    // The seam replaces the save with one that throws. This is the only way to
-    // test UnauthorizedAccessException on every operating system.
-    private GamePathCheck CheckWhoseSaveThrows(Type exceptionType)
+    // The seam replaces the Save method with a method that throws. This is the
+    // only way to test UnauthorizedAccessException on every operating system.
+    private GamePathCheck CheckWhoseSaveMethodThrows(Type exceptionType)
         => new(
             _config,
             _ => throw (Exception)Activator.CreateInstance(exceptionType, "the disk says no")!,
@@ -276,14 +276,14 @@ public class GamePathCheckTests : IDisposable
     [Theory]
     [InlineData(typeof(IOException))]
     [InlineData(typeof(UnauthorizedAccessException))]
-    public async Task FixAsync_reports_a_failed_fix_for_each_exception_that_a_save_can_throw(
+    public async Task FixAsync_reports_a_failed_fix_for_each_exception_that_Save_can_throw(
         Type exceptionType)
     {
         var old = CreateFile(Path.Combine("old", "midtown2.exe"));
         _config.GamePath = old;
         _pickerAnswer = CreateFile(Path.Combine("picked", "midtown2.exe"));
 
-        var result = await CheckWhoseSaveThrows(exceptionType).FixAsync(default);
+        var result = await CheckWhoseSaveMethodThrows(exceptionType).FixAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("cannot save the path: the disk says no", result.Message);
@@ -298,7 +298,7 @@ public class GamePathCheckTests : IDisposable
     {
         _registryAnswer = CreateFile(Path.Combine("registry", "midtown2.exe"));
 
-        var result = await CheckWhoseSaveThrows(exceptionType).RunAsync(default);
+        var result = await CheckWhoseSaveMethodThrows(exceptionType).RunAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("cannot save the path: the disk says no", result.Message);
@@ -307,7 +307,7 @@ public class GamePathCheckTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_reports_a_failed_save_through_a_real_store_too()
+    public async Task RunAsync_reports_a_failed_fix_when_a_real_store_cannot_write_the_file()
     {
         _registryAnswer = CreateFile(Path.Combine("registry", "midtown2.exe"));
 
@@ -319,12 +319,12 @@ public class GamePathCheckTests : IDisposable
     }
 
     [Fact]
-    public async Task Does_not_catch_an_exception_that_is_not_a_failed_save()
+    public async Task Does_not_catch_an_exception_that_is_not_an_IO_failure()
     {
         _pickerAnswer = CreateFile(Path.Combine("picked", "midtown2.exe"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await CheckWhoseSaveThrows(typeof(InvalidOperationException)).FixAsync(default));
+            await CheckWhoseSaveMethodThrows(typeof(InvalidOperationException)).FixAsync(default));
     }
 
     [Fact]

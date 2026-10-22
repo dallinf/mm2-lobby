@@ -7,10 +7,17 @@ namespace Mm2Lobby.Windows;
 /// <summary>
 /// This class runs a program and waits for it to exit. It never throws when
 /// the program is missing or when the player refuses the permission
-/// prompt. It returns exit code 127 instead. ZeroTierClient depends on this.
+/// prompt. It returns NotRunExitCode instead. ZeroTierClient depends on this.
 /// </summary>
 public sealed class SystemProcessRunner : IProcessRunner
 {
+    /// <summary>
+    /// The exit code for a program that did not run. The program is missing,
+    /// or the player refused the permission prompt. ElevatedCommand and the
+    /// test fakes use this constant, so each place has one source for the fact.
+    /// </summary>
+    public const int NotRunExitCode = 127;
+
     private readonly bool _elevate;
 
     public SystemProcessRunner(bool elevate = false) => _elevate = elevate;
@@ -53,7 +60,7 @@ public sealed class SystemProcessRunner : IProcessRunner
         {
             // Win32Exception covers a missing program. It also covers a player
             // who chooses No at the permission prompt.
-            return new ProcessResult(127, "", e.Message);
+            return new ProcessResult(NotRunExitCode, "", e.Message);
         }
     }
 }

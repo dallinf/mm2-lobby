@@ -14,39 +14,40 @@ public sealed class GamePathCheck : ICheck
     private readonly AppConfig _config;
     private readonly Action<AppConfig> _save;
     private readonly Func<string?> _readGamePathFromRegistry;
-    private readonly Func<string?> _askTheUser;
+    private readonly Func<string?> _askThePlayer;
 
     /// <param name="readGamePathFromRegistry">
     /// Returns the path of an existing midtown2.exe, or null. GameLocator.FindInRegistry
     /// is the real implementation.
     /// </param>
-    /// <param name="askTheUser">
-    /// Opens a file picker. It returns the path that the user chooses, or null
-    /// when the user cancels. The window project supplies it.
+    /// <param name="askThePlayer">
+    /// Opens a file picker. It returns the path that the player chooses, or null
+    /// when the player cancels. The window project supplies it.
     /// </param>
     public GamePathCheck(
         AppConfig config,
         ConfigStore configStore,
         Func<string?> readGamePathFromRegistry,
-        Func<string?> askTheUser)
-        : this(config, configStore.Save, readGamePathFromRegistry, askTheUser)
+        Func<string?> askThePlayer)
+        : this(config, configStore.Save, readGamePathFromRegistry, askThePlayer)
     {
     }
 
     /// <summary>
-    /// This constructor lets a test replace the save. ConfigStore is a sealed
-    /// class, so a test cannot make it throw every kind of exception.
+    /// This constructor lets a test replace the Save method of ConfigStore.
+    /// ConfigStore is a sealed class, so a test cannot make it throw every
+    /// kind of exception.
     /// </summary>
     internal GamePathCheck(
         AppConfig config,
         Action<AppConfig> save,
         Func<string?> readGamePathFromRegistry,
-        Func<string?> askTheUser)
+        Func<string?> askThePlayer)
     {
         _config = config;
         _save = save;
         _readGamePathFromRegistry = readGamePathFromRegistry;
-        _askTheUser = askTheUser;
+        _askThePlayer = askThePlayer;
     }
 
     public string Name => "Midtown Madness 2";
@@ -76,7 +77,7 @@ public sealed class GamePathCheck : ICheck
 
     public Task<CheckResult> FixAsync(CancellationToken ct)
     {
-        var chosen = _askTheUser();
+        var chosen = _askThePlayer();
 
         if (string.IsNullOrWhiteSpace(chosen))
         {
@@ -100,8 +101,9 @@ public sealed class GamePathCheck : ICheck
     }
 
     /// <summary>
-    /// This method returns null when the save works. It returns a failed result
-    /// when the save throws an IOException or an UnauthorizedAccessException.
+    /// This method calls Save. It returns null when Save works. It returns a
+    /// failed result when Save throws an IOException or an
+    /// UnauthorizedAccessException.
     /// </summary>
     private CheckResult? TrySave(string path)
     {
@@ -122,9 +124,10 @@ public sealed class GamePathCheck : ICheck
     }
 
     /// <summary>
-    /// This method changes the shared configuration and saves it. If the save
-    /// throws an exception, the method restores the old path and throws the
-    /// same exception again. So the memory and the file keep the same path.
+    /// This method changes the shared configuration and saves it. If the
+    /// method that saves throws an exception, this method restores the old path
+    /// and throws the same exception again. So the memory and the file keep the
+    /// same path.
     /// </summary>
     private void Save(string path)
     {

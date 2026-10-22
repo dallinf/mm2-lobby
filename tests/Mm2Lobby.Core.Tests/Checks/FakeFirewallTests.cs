@@ -1,4 +1,5 @@
 using Mm2Lobby.Core.Tests.Fakes;
+using Mm2Lobby.Windows;
 
 namespace Mm2Lobby.Core.Tests.Checks;
 
@@ -11,8 +12,9 @@ public class FakeFirewallTests
         + "enable=yes profile=any";
 
     private const string Set =
-        "advfirewall firewall set rule name=\"R\" dir=in new program=\"D:\\h\\m.exe\" "
-        + "action=allow enable=yes profile=any";
+        "advfirewall firewall set rule name=\"R\" dir=in new program=\"D:\\h\\m.exe\"";
+
+    private const string Delete = "advfirewall firewall delete rule name=\"R\"";
 
     private readonly FakeFirewall _firewall = new();
 
@@ -41,7 +43,8 @@ public class FakeFirewallTests
     [Theory]
     [InlineData(Add)]
     [InlineData(Set)]
-    public async Task Plain_add_and_set_are_refused_and_change_nothing(string command)
+    [InlineData(Delete)]
+    public async Task Plain_add_set_and_delete_are_refused_and_change_nothing(string command)
     {
         await Run(Add);
         var before = _firewall.Rules.ToList();
@@ -80,17 +83,39 @@ public class FakeFirewallTests
     [InlineData("advfirewall firewall add rule name=\"R\"")]
     [InlineData("advfirewall firewall add rule name=\"R\" action=allow program=\"C:\\g\\m.exe\"")]
     [InlineData("advfirewall firewall add rule name=\"R\" dir=in program=\"C:\\g\\m.exe\"")]
-    [InlineData("advfirewall firewall add rule name=\"R\" dir=in action=allow")]
-    public async Task Add_without_dir_action_or_program_answers_1_and_creates_no_rule(string command)
+    public async Task Add_without_dir_or_action_answers_1_and_creates_no_rule(string command)
     {
         Assert.Equal(1, await Run(command));
         Assert.Empty(_firewall.Rules);
     }
 
+    [Fact]
+    public async Task Add_without_a_program_creates_a_rule_for_every_program()
+    {
+        Assert.Equal(0, await Run("advfirewall firewall add rule name=\"R\" dir=in action=allow"));
+
+        Assert.Equal(new FakeFirewall.Rule("R", "in", "Any"), Assert.Single(_firewall.Rules));
+    }
+
+    [Fact]
+    public async Task Show_with_dir_lists_only_the_rules_of_that_direction()
+    {
+        await Run(Add);
+
+        var inbound = await _firewall.Plain.RunAsync(
+            "netsh.exe", "advfirewall firewall show rule name=\"R\" dir=in", default);
+        var outbound = await _firewall.Plain.RunAsync(
+            "netsh.exe", "advfirewall firewall show rule name=\"R\" dir=out", default);
+
+        Assert.Equal(0, inbound.ExitCode);
+        Assert.Contains("Rule Name:   R", inbound.StandardOutput);
+        Assert.Equal(1, outbound.ExitCode);
+    }
+
     [Theory]
-    [InlineData("advfirewall firewall show rule name=\"R\" dir=in")]
+    [InlineData("advfirewall firewall show rule name=\"R\" action=allow")]
     [InlineData("advfirewall firewall show rule name=\"R\" dir=in action=allow program=\"C:\\g\\m.exe\"")]
-    public async Task Show_with_a_parameter_that_only_add_takes_answers_1(string command)
+    public async Task Show_with_a_form_that_the_fake_does_not_model_answers_1(string command)
     {
         await Run(Add);
 
@@ -153,22 +178,39 @@ public class FakeFirewallTests
     }
 
     [Fact]
-    public async Task Delete_is_not_a_command_the_fake_knows()
+    public async Task Elevated_delete_removes_every_rule_of_the_name_and_answers_1_when_none_matches()
     {
         await Run(Add);
+        await Run(Add);
+        await Run(Add.Replace("name=\"R\"", "name=\"S\""));
 
-        Assert.Equal(1, await Run("advfirewall firewall delete rule name=\"R\""));
-        Assert.Single(_firewall.Rules);
+        var first = await Run(Delete);
+        var second = await Run(Delete);
+
+        Assert.Equal(0, first);
+        Assert.Equal(1, second);
+        Assert.Equal("S", Assert.Single(_firewall.Rules).Name);
     }
 
     [Fact]
-    public async Task Throws_for_an_empty_file_name_and_answers_127_for_another_program()
+    public async Task Elevated_delete_with_dir_removes_only_the_rules_of_that_direction()
+    {
+        await Run(Add);
+        await Run(Add.Replace("dir=in", "dir=out"));
+
+        Assert.Equal(0, await Run(Delete + " dir=out"));
+
+        Assert.Equal("in", Assert.Single(_firewall.Rules).Direction);
+    }
+
+    [Fact]
+    public async Task Throws_for_an_empty_file_name_and_answers_the_not_run_code_for_another_program()
     {
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => _firewall.Plain.RunAsync("", Show, default));
 
         var other = await _firewall.Plain.RunAsync("other.exe", Show, default);
-        Assert.Equal(127, other.ExitCode);
+        Assert.Equal(SystemProcessRunner.NotRunExitCode, other.ExitCode);
     }
 
     [Fact]

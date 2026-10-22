@@ -15,6 +15,10 @@ public class FirewallCheckTests
 
     private const string Program = "netsh.exe";
 
+    private const string Scope =
+        "The check sees only the two rules that this app adds. If Windows already has an Allow "
+        + "rule for MM2, pressing Fix adds the app's own rules.";
+
     private static readonly string ShowInbound = Show(InboundName);
     private static readonly string ShowOutbound = Show(OutboundName);
 
@@ -37,11 +41,11 @@ public class FirewallCheckTests
 
     private static string SetInbound(string path = GamePath)
         => $"{Program} advfirewall firewall set rule name=\"{InboundName}\" dir=in "
-            + $"new program=\"{path}\" action=allow enable=yes profile=any";
+            + $"new program=\"{path}\"";
 
     private static string SetOutbound(string path = GamePath)
         => $"{Program} advfirewall firewall set rule name=\"{OutboundName}\" dir=out "
-            + $"new program=\"{path}\" action=allow enable=yes profile=any";
+            + $"new program=\"{path}\"";
 
     private static string Arguments(string call) => call[(Program.Length + 1)..];
 
@@ -93,7 +97,7 @@ public class FirewallCheckTests
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("outbound traffic", result.Message);
         Assert.DoesNotContain("inbound", result.Message);
-        Assert.Contains("skip this fix", result.Message);
+        Assert.Contains(Scope, result.Message);
         Assert.Empty(_elevated.Calls);
     }
 
@@ -108,7 +112,7 @@ public class FirewallCheckTests
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("inbound traffic", result.Message);
         Assert.DoesNotContain("outbound", result.Message);
-        Assert.Contains("skip this fix", result.Message);
+        Assert.Contains(Scope, result.Message);
     }
 
     [Fact]
@@ -121,7 +125,7 @@ public class FirewallCheckTests
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("rules are missing", result.Message);
-        Assert.Contains("skip this fix", result.Message);
+        Assert.Contains(Scope, result.Message);
         Assert.Empty(_elevated.Calls);
     }
 
@@ -135,7 +139,11 @@ public class FirewallCheckTests
 
         Assert.Contains("MM2 Lobby firewall rule", result.Message);
         Assert.DoesNotContain("No firewall rule allows MM2", result.Message);
-        Assert.Contains("If MM2 already finds hosts", result.Message);
+        Assert.Contains("The check sees only the two rules that this app adds", result.Message);
+        Assert.Contains(
+            "If Windows already has an Allow rule for MM2, pressing Fix adds the app's own rules",
+            result.Message);
+        Assert.DoesNotContain("skip", result.Message);
     }
 
     [Fact]
@@ -264,7 +272,7 @@ public class FirewallCheckTests
     [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(true, true)]
-    public async Task FixAsync_asks_for_permission_two_times_at_most(bool inbound, bool outbound)
+    public async Task FixAsync_asks_for_permission_exactly_two_times(bool inbound, bool outbound)
     {
         var firewall = WithRules(inbound, outbound);
 
@@ -362,7 +370,7 @@ public class FirewallCheckTests
     }
 
     [Fact]
-    public async Task FixAsync_names_a_failed_change_of_the_outbound_rule()
+    public async Task FixAsync_names_the_outbound_rule_when_netsh_cannot_change_it()
     {
         var firewall = WithRules(inbound: true, outbound: true);
         firewall.SetFails[OutboundName] = 127;
@@ -377,7 +385,7 @@ public class FirewallCheckTests
     }
 
     [Fact]
-    public async Task FixAsync_names_a_failed_change_of_the_inbound_rule_and_leaves_the_outbound_rule_alone()
+    public async Task FixAsync_names_the_inbound_rule_when_netsh_cannot_change_it_and_leaves_the_outbound_rule_alone()
     {
         var firewall = WithRules(inbound: true, outbound: true);
         firewall.SetFails[InboundName] = 127;
@@ -390,7 +398,7 @@ public class FirewallCheckTests
     }
 
     [Fact]
-    public async Task FixAsync_keeps_the_changed_inbound_rule_and_the_old_outbound_rule_when_the_second_change_fails()
+    public async Task FixAsync_keeps_the_changed_inbound_rule_and_the_old_outbound_rule_when_netsh_cannot_change_the_outbound_rule()
     {
         const string old = @"D:\Old\midtown2.exe";
         var firewall = WithRules(inbound: true, outbound: true, program: old);
@@ -403,7 +411,7 @@ public class FirewallCheckTests
     }
 
     [Fact]
-    public async Task FixAsync_keeps_the_changed_inbound_rule_when_the_add_of_the_outbound_rule_fails()
+    public async Task FixAsync_keeps_the_changed_inbound_rule_when_netsh_cannot_add_the_outbound_rule()
     {
         const string old = @"D:\Old\midtown2.exe";
         var firewall = WithRules(inbound: true, outbound: false, program: old);
@@ -416,6 +424,8 @@ public class FirewallCheckTests
         Assert.Equal(GamePath, Assert.Single(firewall.Rules).Program);
     }
 
+    // FakeFirewall deletes a rule for a delete command, as netsh does. So a fix
+    // that deletes a rule before it changes the rule fails here.
     [Theory]
     [InlineData(false, false, InboundName)]
     [InlineData(false, false, OutboundName)]

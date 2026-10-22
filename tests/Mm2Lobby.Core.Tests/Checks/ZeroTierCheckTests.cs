@@ -36,8 +36,10 @@ public class ZeroTierCheckTests
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("https://www.zerotier.com/download/", result.FixDescription);
-        Assert.Contains("Open Windows Services", result.FixDescription);
+        Assert.Contains("type Services", result.FixDescription);
         Assert.Contains("ZeroTier One", result.FixDescription);
+        Assert.Contains("Status column of ZeroTier One is blank", result.FixDescription);
+        Assert.DoesNotContain("Stopped", result.FixDescription);
         Assert.Contains("authentication token", result.Message);
         Assert.Contains("run it as an administrator", result.FixDescription);
         Assert.Null(_zeroTier.RequestedNetworkId);

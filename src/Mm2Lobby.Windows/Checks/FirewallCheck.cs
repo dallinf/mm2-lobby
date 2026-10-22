@@ -14,8 +14,8 @@ namespace Mm2Lobby.Windows.Checks;
 /// The app keeps one rule for each direction, and each rule has its own name.
 /// So the check can see that only one direction is missing. The check does not
 /// read the text of the netsh output, because Windows translates that text.
-/// The check sees only these two rules. A rule that Windows made when the user
-/// chose Allow at the firewall prompt is not visible to the check. The check
+/// The check sees only these two rules. A rule that Windows made when the
+/// player chose Allow at the firewall prompt is not visible to the check. The check
 /// also cannot see that a rule names an old program path. The fix changes each
 /// rule that exists, so the fix repairs that case.
 /// </remarks>
@@ -25,7 +25,12 @@ public sealed class FirewallCheck : ICheck
     public const string InboundRuleName = $"{RuleName} (inbound)";
     public const string OutboundRuleName = $"{RuleName} (outbound)";
 
-    private const string SkipHint = "If MM2 already finds hosts, you can skip this fix.";
+    // The check cannot see a rule that Windows made. The text says so, and it
+    // says what the Fix button does in that case. The window enables Host and
+    // Join only when every check passes, so the text must not offer a skip.
+    private const string Scope =
+        "The check sees only the two rules that this app adds. If Windows already has "
+        + "an Allow rule for MM2, pressing Fix adds the app's own rules.";
 
     private readonly IProcessRunner _runner;
     private readonly IProcessRunner _elevatedRunner;
@@ -58,10 +63,10 @@ public sealed class FirewallCheck : ICheck
         var message = (inboundExists, outboundExists) switch
         {
             (true, false) =>
-                $"The MM2 Lobby firewall rule for outbound traffic is missing. {SkipHint}",
+                $"The MM2 Lobby firewall rule for outbound traffic is missing. {Scope}",
             (false, true) =>
-                $"The MM2 Lobby firewall rule for inbound traffic is missing. {SkipHint}",
-            _ => $"The MM2 Lobby firewall rules are missing. {SkipHint}",
+                $"The MM2 Lobby firewall rule for inbound traffic is missing. {Scope}",
+            _ => $"The MM2 Lobby firewall rules are missing. {Scope}",
         };
 
         return new CheckResult(
@@ -88,10 +93,11 @@ public sealed class FirewallCheck : ICheck
 
         // Each elevated process shows one permission prompt. The plain runner
         // needs no prompt, so the app asks it which rules exist. The app
-        // changes a rule that exists in place with a set command. The rule is
-        // never missing, so a refused prompt cannot remove a rule that works.
-        // The app adds a rule that does not exist. The fix therefore shows
-        // two prompts in every case.
+        // changes a rule that exists with a set command. The app assumes that
+        // a set command keeps the rule in place, so the rule is never missing
+        // and a refused prompt cannot remove a rule that works. The Windows
+        // script must check that assumption. The app adds a rule that does
+        // not exist. The fix therefore shows two prompts in every case.
         var inboundExists = await RuleExistsAsync(InboundRuleName, ct);
         var outboundExists = await RuleExistsAsync(OutboundRuleName, ct);
 
@@ -103,7 +109,7 @@ public sealed class FirewallCheck : ICheck
         {
             var arguments = exists
                 ? $"advfirewall firewall set rule name=\"{ruleName}\" dir={direction} "
-                    + $"new program=\"{path}\" action=allow enable=yes profile=any"
+                    + $"new program=\"{path}\""
                 : $"advfirewall firewall add rule name=\"{ruleName}\" "
                     + $"dir={direction} action=allow program=\"{path}\" enable=yes profile=any";
 

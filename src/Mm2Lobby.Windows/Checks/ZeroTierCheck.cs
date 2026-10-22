@@ -27,7 +27,7 @@ public sealed class ZeroTierCheck : ICheck
     public async Task<CheckResult> RunAsync(CancellationToken ct)
     {
         // zerotier-cli fails in three cases. ZeroTier is not installed, or its
-        // service is stopped, or the user cannot read the authentication token
+        // service is stopped, or the player cannot read the authentication token
         // of the service. By default, Windows lets only an administrator read
         // that token. The app sees the same failure in all three cases, so the
         // fix text names all three.
@@ -37,10 +37,12 @@ public sealed class ZeroTierCheck : ICheck
             return Fail(
                 "The app cannot reach ZeroTier. ZeroTier is not installed, its service is stopped, "
                     + "or only an administrator can read the ZeroTier authentication token.",
-                "Open Windows Services. "
+                "Press the Windows key, type Services, and open Services. "
+                    + "In the list, find ZeroTier One. "
                     + $"If ZeroTier One is not in the list, install ZeroTier from {DownloadPage}. "
-                    + "If ZeroTier One is Stopped, start it. "
-                    + "If ZeroTier One is Running, close this app and run it as an administrator. "
+                    + "If the Status column of ZeroTier One is blank, the service is stopped. "
+                    + "Right-click ZeroTier One and choose Start. "
+                    + "If the Status column says Running, close this app and run it as an administrator. "
                     + "Then run the check again.");
         }
 
