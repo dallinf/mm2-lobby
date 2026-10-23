@@ -10,7 +10,11 @@ namespace Mm2Lobby.Windows.Checks;
 /// </summary>
 public sealed class DirectPlayCheck : ICheck
 {
-    private const string FeatureLibrary = @"C:\Windows\SysWOW64\dplayx.dll";
+    /// <summary>
+    /// The 32 bit copy of the DirectPlay library. Windows 11 ships this copy
+    /// only, and the lobby launcher reads the same path.
+    /// </summary>
+    public const string FeatureLibrary = @"C:\Windows\SysWOW64\dplayx.dll";
 
     private const string EnableCommand =
         "/online /enable-feature /featurename:DirectPlay /all /norestart";
