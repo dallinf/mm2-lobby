@@ -381,12 +381,29 @@ A fix that wrote over that key would break the other program, and the player
 would never connect the breakage to this app. Two keys that name the same
 executable sit beside each other with no harm.
 
-`LobbyApplicationReader.ReadFrom`, which the launcher uses, takes the key of
-this app before any other key. The name of our key also holds the word
-`midtown`, so a match on that word alone could choose the key of an installer.
-That key holds the GUID of the game and not the GUID of the group, and the
-players would then meet nobody. A computer with no key of this app keeps the
-key that it has, so a computer that worked before goes on working.
+`LobbyApplicationReader.ReadFrom` reads our key and no other key. The launcher
+and the setup check both call it, so the two cannot disagree.
+
+**There is no fallback to another key, and there must never be one.** An
+earlier draft read the first key whose name holds the word `midtown` when ours
+was absent. Walk that case: a friend who installed the game has the installer's
+key, holding the GUID of the game, and has not yet pressed Fix. The launcher
+would start the game with a GUID that nobody in the group shares, and the game
+would open into a session that **looks correct and that no friend can see**.
+MM2 reports no error and no code, so no player can report it either. That is
+the silent failure this section opens with, built deliberately.
+
+The fallback helps only a player who has not pressed Fix, and that player is
+already handled: the row reads `Optional`, one press writes our key, and the
+reader finds it from then on. A computer with no key of ours reports `NoKey`,
+the app uses the ordinary launch, and the player types the address of the host.
+That is what every player has today, so nobody is worse off.
+
+The reader also refuses a key of ours that holds the wrong GUID, and reports
+`WrongGuid`. Someone may edit the key by hand. The check treats that as a
+failure, and the launcher must not disagree with the check. Both rules live in
+the one method that reads the registry, so a session that nobody can see is
+**structurally impossible** and not merely unlikely.
 
 #### The application GUID
 
@@ -403,6 +420,10 @@ writes this value every time, and the app never generates one.
 **Do not change this value.** Every player already holds it. A player who holds
 another value meets nobody, and MM2 then reports that it found no host and
 gives no reason.
+
+`LobbyApplicationReader.ApplicationGuid` holds the value, and
+`LobbyRegistrationCheck.ApplicationGuid` names the same field. The reader
+compares the key against it, so the check and the launcher read one source.
 
 The DirectPlay check reads a file rather than asking DISM, because
 `dism /online /get-featureinfo` needs administrator rights and the check must
@@ -531,7 +552,7 @@ These are the failures the group will actually meet.
 | A friend is online but their app is not running | Show the remembered name and "app not running", which the user must be able to tell apart from "offline" |
 | DirectPlay is turned off | `PreflightCheck` blocks and runs the `dism` command |
 | The firewall blocks the game | `PreflightCheck` adds the rule before the player ever starts MM2 |
-| The DirectPlay key of this app is missing, or it holds another application GUID, or it names another folder, or it holds a `Launcher` value | **The window shows the row and does not block.** The app offers to write its own key with one elevation prompt. It reads and writes that key only, so a key that an installer wrote stays as it is. Without the key the player still races: the window shows the address and the player types it into MM2. A block would take that race away from a player who holds no administrator rights. The window gates **Host** and **Join** on the blocking checks only |
+| The DirectPlay key of this app is missing, or it holds another application GUID, or it names another folder, or it holds a `Launcher` value | **The window shows the row and does not block.** The app offers to write its own key with one elevation prompt. It reads and writes that key only, so a key that an installer wrote stays as it is, and the launcher never reads one. Without the key the player still races: the window shows the address and the player types it into MM2. A block would take that race away from a player who holds no administrator rights. The window gates **Host** and **Join** on the blocking checks only |
 | MM2 carries a legacy compatibility mode | **The window shows the row and does not block**, for the same reason. The app offers to remove the mode. The fix writes `HKCU`, so Windows asks for no permission. The fix removes the operating system tokens only, because a player can carry other tokens that the game needs |
 | The host's link is relayed, not direct | Show the link quality beside the host's name, the way GameRanger shows a ping estimate, so a player understands a slow race |
 | App versions disagree | The announcement carries `appVersion`, `PeerTable` stores it, and `Peer.AppVersion` carries it to the window. **The window owns the warning** — it compares each peer's version against its own and marks any mismatch. Revision 2 demanded this warning without giving `Peer` a field to carry it, so no task could have built it |

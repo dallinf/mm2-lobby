@@ -30,9 +30,13 @@ public class LobbyRegistrationCheckTests
 
     private LobbyRegistration _registration = Good();
 
+    /// <summary>
+    /// An entry as the reader gives it. The reader refuses any GUID but the
+    /// one of the group, so an entry always carries that GUID.
+    /// </summary>
     private static LobbyApplicationEntry Entry(
-        string folder = Folder, string file = @"\midtown2.exe", Guid? guid = null)
-        => new(KeyName, guid ?? TheGuid, folder, file, "", folder);
+        string folder = Folder, string file = @"\midtown2.exe")
+        => new(KeyName, TheGuid, folder, file, "", folder);
 
     private static LobbyRegistration Good()
         => new(Entry(), LobbyRegistrationFault.None);
@@ -129,19 +133,28 @@ public class LobbyRegistrationCheckTests
     public async Task Fails_when_the_entry_holds_another_application_GUID()
     {
         // A player whose key holds another GUID meets nobody of the group,
-        // and MM2 reports no host and gives no reason. The check must see
-        // that before the player meets it.
-        _registration = new LobbyRegistration(
-            Entry(guid: Guid.Parse("FFFFFFFF-0000-0000-0000-000000000002")),
-            LobbyRegistrationFault.None);
-
-        var result = await Check().RunAsync(default);
+        // and MM2 reports no host and gives no reason. The reader reports the
+        // fault, so the check and the launcher cannot disagree.
+        var result = await ResultFor(LobbyRegistrationFault.WrongGuid);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Equal(
             "The DirectPlay entry holds another application GUID, "
                 + "so you would meet none of your friends.",
             result.Message);
+    }
+
+    [Fact]
+    public async Task Fails_with_a_sentence_for_a_fault_that_the_check_does_not_name()
+    {
+        // A later fault of the reader must reach the player as a sentence. The
+        // last arm of the switch reads the entry, and a fault that gives no
+        // entry would otherwise throw there. The player would then read a
+        // message about a null reference.
+        var result = await ResultFor((LobbyRegistrationFault)999);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Equal("The DirectPlay entry is not complete.", result.Message);
     }
 
     [Fact]
@@ -347,10 +360,8 @@ public class LobbyRegistrationCheckTests
     public async Task The_fix_always_writes_the_GUID_of_the_group()
     {
         // The app owns this key, so the key holds the value of the group and
-        // nothing else. The app never generates a GUID.
-        _registration = new LobbyRegistration(
-            Entry(guid: Guid.Parse("FFFFFFFF-0000-0000-0000-000000000002")),
-            LobbyRegistrationFault.None);
+        // the app never generates a GUID.
+        _registration = new LobbyRegistration(null, LobbyRegistrationFault.WrongGuid);
         ImportWorks();
 
         Assert.Contains(

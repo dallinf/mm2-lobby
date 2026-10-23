@@ -37,6 +37,13 @@ internal enum LobbyRegistrationFault
     /// <summary>The key holds no value that reads as a GUID.</summary>
     NoGuid,
 
+    /// <summary>
+    /// The key holds a GUID that is not the GUID of this group. DirectPlay
+    /// shows a player only the sessions that carry the same application GUID,
+    /// so that player would meet nobody.
+    /// </summary>
+    WrongGuid,
+
     /// <summary>The key holds no Path value.</summary>
     NoPath,
 
@@ -100,9 +107,6 @@ internal static class LobbyApplicationReader
     public const string KeyPath =
         @"SOFTWARE\WOW6432Node\Microsoft\DirectPlay\Applications";
 
-    /// <summary>The word that names the key of MM2.</summary>
-    public const string KeyNameMark = "midtown";
-
     /// <summary>
     /// The name of the key that this app writes. The firewall rules of the
     /// project carry the same name, so one name marks every thing that this
@@ -115,6 +119,28 @@ internal static class LobbyApplicationReader
     /// </para>
     /// </summary>
     public const string OwnKeyName = "MM2 Lobby - Midtown Madness 2";
+
+    /// <summary>
+    /// The application GUID of this group of players.
+    /// <para>
+    /// DirectPlay shows a player only the sessions that carry the same
+    /// application GUID. The value does not have to be the GUID of the game.
+    /// It has to be the same value on every computer of the group, and every
+    /// player runs this app.
+    /// </para>
+    /// <para>
+    /// A run on two computers on 2026-10-23 proved this value. One player
+    /// hosted, the other player joined, and the player who joined typed no
+    /// address.
+    /// </para>
+    /// <para>
+    /// WARNING: do not change this value. Every player already holds it. A
+    /// player who holds another value meets nobody, and MM2 then reports that
+    /// it found no host and gives no reason.
+    /// </para>
+    /// </summary>
+    public static readonly Guid ApplicationGuid =
+        new("42418287-74D9-4C2D-A8D0-1B5D4D811C21");
 
     private const string GuidValue = "Guid";
     private const string PathValue = "Path";
@@ -129,53 +155,42 @@ internal static class LobbyApplicationReader
     private const string LauncherValue = "Launcher";
 
     /// <summary>
-    /// This method chooses the key that the launcher reads, and it reads the
-    /// values of that key.
+    /// This method reads the key of this app, and it reads no other key. It
+    /// returns the first fault that it finds.
     /// <para>
-    /// The key of this app comes first. Its name also holds the word midtown,
-    /// so a match on that word alone could choose the key of an installer
-    /// instead. That key holds the application GUID of the game, and the
-    /// group shares another GUID. The players would then meet nobody.
+    /// WARNING: read no other key here, and add no fallback. The key of an
+    /// installer holds the application GUID of the game, and this group
+    /// shares another GUID. A launch against that key opens a session that
+    /// looks correct and that no friend can see. MM2 reports nothing, and no
+    /// player can report it either.
     /// </para>
     /// <para>
-    /// A computer with no key of this app keeps the key that it has. The
-    /// computer of the owner carries such a key from the spike, and fourteen
-    /// runs worked against it.
+    /// A computer with no key of this app gives NoKey. The app then falls
+    /// back to the ordinary launch, where the player types the address of the
+    /// host. That is what every player has today, so nobody loses anything.
     /// </para>
-    /// </summary>
-    public static LobbyRegistration ReadFrom(IEnumerable<LobbyApplicationKey> keys)
-    {
-        var all = keys.ToList();
-
-        var key = Named(all, OwnKeyName)
-            ?? all.FirstOrDefault(
-                one => one.Name.Contains(KeyNameMark, StringComparison.OrdinalIgnoreCase));
-
-        return ValuesOf(key);
-    }
-
-    /// <summary>
-    /// This method reads one key by its name, and it reads no other key. The
-    /// setup check owns one key, so it judges that key alone.
     /// </summary>
     /// <param name="keys">Every key under the Applications key.</param>
-    /// <param name="name">The name of the key to read.</param>
-    public static LobbyRegistration ReadNamed(
-        IEnumerable<LobbyApplicationKey> keys, string name)
-        => ValuesOf(Named(keys.ToList(), name));
-
-    /// <summary>
-    /// This method reads the values of one key. It returns the first fault
-    /// that it finds.
-    /// </summary>
-    /// <param name="key">The key, or null when the reader found none.</param>
-    private static LobbyRegistration ValuesOf(LobbyApplicationKey? key)
+    public static LobbyRegistration ReadFrom(IEnumerable<LobbyApplicationKey> keys)
     {
+        // The registry ignores the letter case of a key name, so this method
+        // ignores it too.
+        var key = keys.FirstOrDefault(
+            one => one.Name.Equals(OwnKeyName, StringComparison.OrdinalIgnoreCase));
+
         if (key is null) return new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
 
         if (!Guid.TryParse(Read(key, GuidValue), out var applicationGuid))
         {
             return new LobbyRegistration(null, LobbyRegistrationFault.NoGuid);
+        }
+
+        // The app owns this key, so the key holds the GUID of the group. A
+        // player who holds another value meets nobody. The reader reports it,
+        // so the setup check and the launcher cannot disagree.
+        if (applicationGuid != ApplicationGuid)
+        {
+            return new LobbyRegistration(null, LobbyRegistrationFault.WrongGuid);
         }
 
         var folder = Read(key, PathValue);
@@ -212,28 +227,12 @@ internal static class LobbyApplicationReader
     }
 
     /// <summary>
-    /// This method finds one key by name. The registry ignores the letter
-    /// case of a key name, so this method ignores it too.
-    /// </summary>
-    private static LobbyApplicationKey? Named(IReadOnlyList<LobbyApplicationKey> keys, string name)
-        => keys.FirstOrDefault(
-            one => one.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>
     /// This method reads the registration of this computer. It gives NoKey on
     /// a computer that does not run Windows, so the launcher and the setup
     /// check share one route to the registry.
     /// </summary>
     public static LobbyRegistration ReadFromThisComputer() => OperatingSystem.IsWindows()
         ? ReadFromRegistry()
-        : new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
-
-    /// <summary>
-    /// This method reads the key of this app on this computer. It gives NoKey
-    /// on a computer that does not run Windows.
-    /// </summary>
-    public static LobbyRegistration ReadOwnFromThisComputer() => OperatingSystem.IsWindows()
-        ? ReadNamed(KeysFromRegistry(), OwnKeyName)
         : new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
 
     /// <summary>

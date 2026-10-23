@@ -43,26 +43,10 @@ public sealed class LobbyRegistrationCheck : ICheck
     public const string KeyName = LobbyApplicationReader.OwnKeyName;
 
     /// <summary>
-    /// The application GUID of this group of players.
-    /// <para>
-    /// DirectPlay shows a player only the sessions that carry the same
-    /// application GUID. The value does not have to be the GUID of the game.
-    /// It has to be the same value on every computer of the group, and every
-    /// player runs this app.
-    /// </para>
-    /// <para>
-    /// A run on two computers on 2026-10-23 proved this value. One player
-    /// hosted, the other player joined, and the player who joined typed no
-    /// address.
-    /// </para>
-    /// <para>
-    /// WARNING: do not change this value. Every player already holds it. A
-    /// player who holds another value meets nobody, and MM2 then reports that
-    /// it found no host and gives no reason.
-    /// </para>
+    /// The application GUID of this group of players. LobbyApplicationReader
+    /// holds the value, so the check and the launcher read one source.
     /// </summary>
-    public static readonly Guid ApplicationGuid =
-        new("42418287-74D9-4C2D-A8D0-1B5D4D811C21");
+    public static readonly Guid ApplicationGuid = LobbyApplicationReader.ApplicationGuid;
 
     private const string Program = "reg.exe";
 
@@ -78,7 +62,7 @@ public sealed class LobbyRegistrationCheck : ICheck
         : this(
             config,
             elevatedRunner,
-            LobbyApplicationReader.ReadOwnFromThisComputer,
+            LobbyApplicationReader.ReadFromThisComputer,
             WriteScriptToTempFile)
     {
     }
@@ -127,6 +111,10 @@ public sealed class LobbyRegistrationCheck : ICheck
                     + "The app cannot start the game in a race for you.",
                 ""),
             LobbyRegistrationFault.NoGuid => ("The DirectPlay entry holds no GUID.", ""),
+            LobbyRegistrationFault.WrongGuid => (
+                "The DirectPlay entry holds another application GUID, "
+                    + "so you would meet none of your friends.",
+                ""),
             LobbyRegistrationFault.NoPath => ("The DirectPlay entry names no folder.", ""),
             LobbyRegistrationFault.NoFile => ("The DirectPlay entry names no file.", ""),
             LobbyRegistrationFault.FileWithoutLeadingBackslash => (
@@ -136,7 +124,12 @@ public sealed class LobbyRegistrationCheck : ICheck
             LobbyRegistrationFault.LauncherValuePresent => (
                 "The DirectPlay entry holds a Launcher value, and that value stops the start.",
                 " The fix also deletes the Launcher value."),
-            _ => EntryIsOurs(registration, path),
+            // The reader gives an entry only when it found the five values.
+            // A fault that this switch does not name must still reach the
+            // player as a sentence, so the entry is read here and nowhere
+            // else.
+            _ when registration.Entry is null => ("The DirectPlay entry is not complete.", ""),
+            _ => NamesThisGame(registration.Entry, path),
         };
 
         if (message.Length == 0)
@@ -268,26 +261,13 @@ public sealed class LobbyRegistrationCheck : ICheck
     }
 
     /// <summary>
-    /// This method reads the two things that the reader does not judge: the
-    /// application GUID of the group, and the game of this computer. An empty
-    /// message means that the entry is good.
+    /// This method reads the one thing that the reader does not judge: the
+    /// game of this computer. The reader knows no game path. An empty message
+    /// means that the entry is good.
     /// </summary>
-    private static (string Message, string Extra) EntryIsOurs(
-        LobbyRegistration registration, string gamePath)
+    private static (string Message, string Extra) NamesThisGame(
+        LobbyApplicationEntry entry, string gamePath)
     {
-        var entry = registration.Entry!;
-
-        // The app owns this key, so the key holds the GUID of the group. A
-        // player who holds another value meets nobody, and MM2 gives no
-        // reason for that.
-        if (entry.ApplicationGuid != ApplicationGuid)
-        {
-            return (
-                "The DirectPlay entry holds another application GUID, "
-                    + "so you would meet none of your friends.",
-                "");
-        }
-
         var named = entry.GameFilePath;
 
         if (string.Equals(named, gamePath, StringComparison.OrdinalIgnoreCase))
