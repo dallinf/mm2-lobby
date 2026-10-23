@@ -34,7 +34,10 @@ public sealed partial class MainWindow : Window
         if (Model is { } model) await model.CheckAgainAsync();
     }
 
-    private void OnHostClick(object? sender, RoutedEventArgs e) => Model?.Host();
+    private async void OnHostClick(object? sender, RoutedEventArgs e)
+    {
+        if (Model is { } model) await model.HostAsync();
+    }
 
     /// <summary>
     /// Gives the list of checks the height that the other rows leave. The
@@ -80,4 +83,6 @@ public sealed partial class MainWindow : Window
     {
         if (Model is { } model) await model.JoinAsync();
     }
+
+    private void OnStartGameClick(object? sender, RoutedEventArgs e) => Model?.StartGame();
 }

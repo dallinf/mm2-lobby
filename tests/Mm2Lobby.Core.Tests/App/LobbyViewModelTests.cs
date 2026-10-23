@@ -242,7 +242,7 @@ public class LobbyViewModelTests : IDisposable
         await using var model = Build();
         await model.StartAsync();
 
-        model.Host();
+        await model.HostAsync();
 
         Assert.Equal(string.Empty, model.HostAddress);
         Assert.DoesNotContain("Give the address", model.HostTitle);
@@ -553,7 +553,7 @@ public class LobbyViewModelTests : IDisposable
         await using var model = Build();
         await model.StartAsync();
 
-        model.Host();
+        await model.HostAsync();
 
         Assert.Equal("10.147.17.42", model.HostAddress);
         Assert.Contains("You host", model.HostTitle);
@@ -568,7 +568,7 @@ public class LobbyViewModelTests : IDisposable
         await using var model = Build();
         await model.StartAsync();
 
-        model.Host();
+        await model.HostAsync();
 
         Assert.Equal(JoinInstructions.ForHost(), model.JoinSteps);
     }
@@ -661,7 +661,7 @@ public class LobbyViewModelTests : IDisposable
         DeliverPeer(hosting: true);
         await _environment.Lobbies[0].RunCycleAsync(default);
 
-        model.Host();
+        await model.HostAsync();
 
         Assert.False(model.CanJoin);
     }
@@ -676,44 +676,29 @@ public class LobbyViewModelTests : IDisposable
 
         Assert.Equal("Host a race", model.HostButtonText);
 
-        model.Host();
+        await model.HostAsync();
         Assert.Equal("Stop the race", model.HostButtonText);
 
-        model.Host();
+        await model.HostAsync();
         Assert.Equal("Host a race", model.HostButtonText);
     }
 
     [Fact]
-    public async Task Host_starts_the_game_at_the_path_of_the_one_configuration()
-    {
-        AddCheck("ZeroTier");
-        _environment.Config.GamePath = @"D:\MM2\midtown2.exe";
-
-        await using var model = Build();
-        await model.StartAsync();
-
-        model.Host();
-
-        Assert.Equal(@"D:\MM2\midtown2.exe", Assert.Single(_environment.LaunchedPaths));
-    }
-
-    [Fact]
-    public async Task A_second_press_stops_the_race_and_starts_no_game()
+    public async Task A_second_press_stops_the_race()
     {
         AddCheck("ZeroTier");
 
         await using var model = Build();
         await model.StartAsync();
 
-        model.Host();
-        model.Host();
+        await model.HostAsync();
+        await model.HostAsync();
 
         Assert.False(_environment.Lobbies[0].IsHosting);
-        Assert.Single(_environment.LaunchedPaths);
     }
 
     [Fact]
-    public async Task Join_copies_the_address_and_starts_the_game()
+    public async Task Join_copies_the_address()
     {
         AddCheck("ZeroTier");
 
@@ -726,11 +711,10 @@ public class LobbyViewModelTests : IDisposable
         await model.JoinAsync();
 
         Assert.Equal("10.147.17.50", Assert.Single(_host.CopiedText));
-        Assert.Single(_environment.LaunchedPaths);
     }
 
     [Fact]
-    public async Task Join_starts_the_game_after_a_clipboard_that_fails()
+    public async Task Join_reports_a_clipboard_that_fails()
     {
         AddCheck("ZeroTier");
         _host.CopyFault = new InvalidOperationException("no clipboard");
@@ -743,11 +727,10 @@ public class LobbyViewModelTests : IDisposable
 
         await model.JoinAsync();
 
-        // The window holds one message. The player must still learn that MM2
-        // started, so the note about the clipboard goes in front of it.
-        Assert.Single(_environment.LaunchedPaths);
+        // The clipboard is a convenience. The window also shows the address in
+        // a large font, so the message sends the player to that address.
         Assert.Contains("no clipboard", model.StatusMessage);
-        Assert.Contains("MM2 started", model.StatusMessage);
+        Assert.Contains("Read the address above", model.StatusMessage);
     }
 
     [Fact]
@@ -759,9 +742,266 @@ public class LobbyViewModelTests : IDisposable
         await using var model = Build();
         await model.StartAsync();
 
-        model.Host();
+        await model.HostAsync();
+        model.StartGame();
 
         Assert.Contains("midtown2.exe is missing", model.StatusMessage);
+    }
+
+    // --- The launch button -------------------------------------------------
+
+    [Fact]
+    public async Task Host_announces_the_race_and_starts_no_game()
+    {
+        // MM2 covers the screen. A game that starts here hides the address
+        // that the host must give to the others.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.True(_environment.Lobbies[0].IsHosting);
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task Host_copies_the_address_of_this_app()
+    {
+        // The host pastes the address to the others before the game starts.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.Equal("10.147.17.42", Assert.Single(_host.CopiedText));
+    }
+
+    [Fact]
+    public async Task Host_reports_a_clipboard_that_fails_and_keeps_the_race()
+    {
+        AddCheck("ZeroTier");
+        _host.CopyFault = new InvalidOperationException("no clipboard");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.Contains("no clipboard", model.StatusMessage);
+        Assert.Contains("Read the address above", model.StatusMessage);
+
+        // The clipboard is a convenience. The race goes on without it.
+        Assert.True(_environment.Lobbies[0].IsHosting);
+        Assert.True(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task Join_starts_no_game()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task The_launch_button_waits_for_Host_or_Join()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.True(model.CanHost);
+        Assert.False(model.CanStartGame);
+
+        await model.HostAsync();
+
+        Assert.True(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task A_press_before_Host_or_Join_starts_no_game()
+    {
+        // This method starts a process. It carries the gate of Host and Join,
+        // so a click that arrives late starts nothing.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.StartGame();
+
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task The_launch_button_names_the_race_for_the_host()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.Equal("Start the race", model.StartGameButtonText);
+    }
+
+    [Fact]
+    public async Task The_launch_button_names_the_game_for_a_player_who_joins()
+    {
+        // A player who joins does not start a race. Another player does.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+
+        Assert.Equal("Start the game", model.StartGameButtonText);
+    }
+
+    [Fact]
+    public async Task The_launch_button_starts_the_game_at_the_path_of_the_one_configuration()
+    {
+        AddCheck("ZeroTier");
+        _environment.Config.GamePath = @"D:\MM2\midtown2.exe";
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Equal(@"D:\MM2\midtown2.exe", Assert.Single(_environment.LaunchedPaths));
+        Assert.Contains("MM2 started", model.StatusMessage);
+    }
+
+    [Fact]
+    public async Task A_second_press_of_Host_takes_the_launch_button_away()
+    {
+        // The second press ends the race. A live button would then start MM2
+        // for a race that nobody hosts.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        await model.HostAsync();
+
+        Assert.False(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task Host_after_Join_makes_this_player_the_host()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+        await model.HostAsync();
+
+        Assert.True(model.CanStartGame);
+        Assert.Equal("Start the race", model.StartGameButtonText);
+    }
+
+    [Fact]
+    public async Task A_host_that_stops_takes_the_launch_button_from_a_player_who_joined()
+    {
+        // The address of that host belongs to a race that ended. A live button
+        // promises a game that no host answers.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+
+        Assert.True(model.CanStartGame);
+
+        DeliverPeer(hosting: false);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.False(model.CanStartGame);
+        Assert.Contains("The host stopped the race", model.StatusMessage);
+    }
+
+    [Fact]
+    public async Task The_launch_button_stays_on_after_a_launch()
+    {
+        // MM2 is flaky. The host must be able to start it again, and he must
+        // keep his place in the lobby.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+        model.StartGame();
+
+        Assert.Equal(2, _environment.LaunchedPaths.Count);
+        Assert.True(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task Check_again_takes_the_launch_button_away()
+    {
+        // Check again builds a new lobby service, and a new service hosts
+        // nothing. The player presses Host again.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        await model.CheckAgainAsync();
+
+        Assert.True(model.CanHost);
+        Assert.False(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task A_new_network_ID_takes_the_launch_button_away()
+    {
+        // The checks ran against the old ID, and those checks gate every
+        // button that starts work.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.True(model.CanStartGame);
+
+        model.ZeroTierNetworkId = "8056c2e21c000001";
+
+        Assert.False(model.CanStartGame);
     }
 
     // --- The name editor ---------------------------------------------------
