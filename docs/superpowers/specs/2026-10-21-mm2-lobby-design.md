@@ -471,6 +471,39 @@ then joins with no dialog. Phase two is Windows-only and is the hardest piece
 of the project. It ships behind the same user interface, so phase one keeps
 working if phase two stalls.
 
+#### The window chooses the path, and the steps follow the path
+
+The launch button takes one of two paths. The window takes the lobby path when
+every advisory check passed in the last run and `ILobbyLauncher.CanLaunch`
+answers true. In every other case, and after a launch that fails for any
+reason, it takes the ordinary path of phase one.
+
+**The steps must follow the path that the window took.** After a lobby launch
+the game holds the address already, so the step `Type the host address` would
+be false. After an ordinary launch that step is the one the player needs most.
+`JoinInstructions` therefore holds four lists, and one method of the window
+chooses between them. The window calls that method after each press and on
+every refresh, so a list cannot go stale two seconds later.
+
+The window shows the address in both cases. The address is information and not
+an instruction: a friend whose own lobby path is shut still needs it.
+
+**The app publishes as `win-x86`.** Windows 11 ships a 32 bit `dplayx.dll`
+only, so a 64 bit process reports `WrongProcessBitness` and never reaches
+DirectPlay.
+
+**The window holds one session.** `ILobbySession` owns the DirectPlay
+interface and the memory that MM2 reads about three seconds after the launch,
+so the window holds it for as long as the game may run and disposes it when
+the player closes the window. The launch button takes no guard against a
+second press, because MM2 stops and the player must start it again without a
+new **Host**. The bound therefore sits on the session and not on the button:
+each press disposes the session that the window holds, and a session releases
+the interface only after the game process ends. The press that follows a crash
+finds no game, so the old session closes and one new session takes its place.
+A press while the game still runs closes nothing, and the window then takes
+the ordinary path.
+
 ### 5.8 Configuration
 
 One file at `%APPDATA%\Mm2Lobby\config.json`.
@@ -560,6 +593,9 @@ These are the failures the group will actually meet.
 | A stray datagram arrives from the home network | `PeerTable` rejects it on the subnet test |
 | `zerotier-cli` is missing or its output changes | `ZeroTierClient` returns null or an empty result and the preflight screen explains it. The app never crashes on unexpected output |
 | Two players claim the host role | Both appear as hosting. The group sorts it out in Discord. The app does not arbitrate |
+| The lobby launch fails for any reason | **The window starts the game the ordinary way**, shows the address, and shows the three steps. The status line names the game first, then the reason and the step that `LobbyLaunchMessages` gives. A panel holds the trail of the DirectPlay calls, which the player can send to the person who runs the group. No player is worse off than he was before the lobby path existed |
+| The lobby launch never opens | The advisory checks did not pass, or `CanLaunch` answers false. **The window says nothing about the lobby path** and starts the game the ordinary way. An advisory row already names its own reason and offers the **Fix**, and a second message would say it twice |
+| The player presses the launch button again | The window starts a game every time. It disposes the session that it holds first, and it takes a new session only when the old one closed. So the window holds one session and never more |
 
 ## 8. Testing
 

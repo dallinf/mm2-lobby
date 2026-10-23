@@ -65,6 +65,12 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private const string SavedNetworkIdMessage =
         "The app saved the network ID. Choose Check again to start the lobby.";
 
+    /// <summary>
+    /// The message of an ordinary start. The app showed this sentence before
+    /// the lobby path existed, and it shows the same sentence after a fallback.
+    /// </summary>
+    private const string OrdinaryStartMessage = "MM2 started. Follow the steps above.";
+
     private static readonly string[] NoSteps = Array.Empty<string>();
 
     /// <summary>
@@ -84,6 +90,24 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         Join,
     }
 
+    /// <summary>
+    /// What the last press of the launch button did. The steps follow this
+    /// value, because a step that names the wrong path is a lie: a game that
+    /// the lobby put in the race asks the player for no address, and a game
+    /// that the app started the ordinary way asks him for one.
+    /// </summary>
+    private enum LaunchPath
+    {
+        /// <summary>The player pressed the launch button never, or not since the role changed.</summary>
+        None,
+
+        /// <summary>The DirectPlay lobby started the game in the race.</summary>
+        Lobby,
+
+        /// <summary>The app started the game, and the player types the address.</summary>
+        Ordinary,
+    }
+
     private readonly ILobbyEnvironment _environment;
     private readonly IWindowHost _host;
     private readonly IReadOnlyList<CheckEntry> _checks;
@@ -92,7 +116,16 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private LobbyService? _lobby;
     private IDisposable? _poll;
     private bool _preflightPassed;
+    private bool _advisoryChecksPassed;
     private bool _disposed;
+
+    /// <summary>
+    /// The live session of the last lobby launch that worked. The app holds
+    /// one session, because one game runs. ILobbySession holds the DirectPlay
+    /// interface and the memory that the game reads, so the window keeps this
+    /// object for as long as the game may run.
+    /// </summary>
+    private ILobbySession? _session;
 
     private string _displayName = string.Empty;
     private string _networkId = string.Empty;
@@ -104,12 +137,14 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private string _statusMessage = string.Empty;
     private string _fixMessage = string.Empty;
     private string _faultMessage = string.Empty;
+    private string _launchReport = string.Empty;
     private bool _setupExpanded = true;
     private bool _canHost;
     private bool _canJoin;
     private bool _canStartGame;
     private bool _busy;
     private LaunchRole _role = LaunchRole.None;
+    private LaunchPath _path = LaunchPath.None;
 
     public LobbyViewModel(ILobbyEnvironment environment, IWindowHost host)
     {
@@ -331,6 +366,23 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool HasFaultMessage => _faultMessage.Length > 0;
 
+    /// <summary>
+    /// The trail of calls of the last lobby launch. The window keeps this text
+    /// behind a panel that the player opens, because the step of a failed
+    /// launch asks him to send a report to the person who runs the group. Only
+    /// this text holds the answer of each DirectPlay call.
+    /// </summary>
+    public string LaunchReport
+    {
+        get => _launchReport;
+        private set
+        {
+            if (Set(ref _launchReport, value)) OnPropertyChanged(nameof(HasLaunchReport));
+        }
+    }
+
+    public bool HasLaunchReport => _launchReport.Length > 0;
+
     /// <summary>Runs the checks and starts the lobby. The window calls this method once.</summary>
     public Task StartAsync() => StartFromAButtonAsync();
 
@@ -424,7 +476,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             // The race ended. A live launch button would start MM2 for a race
             // that nobody hosts.
-            _role = LaunchRole.None;
+            TakeTheRole(LaunchRole.None);
             RefreshStatus();
             return;
         }
@@ -433,7 +485,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         // This player is the host now. A Join that came first does not hold
         // any more, so this line also takes that role away.
-        _role = LaunchRole.Host;
+        TakeTheRole(LaunchRole.Host);
         RefreshStatus();
 
         // MyAddress is null until a cycle reads the ZeroTier network. The app
@@ -457,7 +509,10 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         var address = _lobby?.CurrentHost?.Address?.ToString();
         if (address is null || _busy) return;
 
-        _role = LaunchRole.Join;
+        TakeTheRole(LaunchRole.Join);
+
+        // The role changed, so the steps of the last launch do not hold.
+        ShowTheSteps(TheStepsForNow());
         UpdateTheButtons();
 
         StatusMessage = await CopyTheAddressAsync(address);
@@ -467,6 +522,18 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     /// Starts MM2. The player presses Host or Join first, reads the address
     /// that the window shows, and gives that address to the others. Then this
     /// method covers the screen with the game.
+    /// <para>
+    /// The method takes the lobby path when the app can take it, and it takes
+    /// the ordinary path in every other case. The window then shows the steps
+    /// of the path that it took.
+    /// </para>
+    /// <para>
+    /// WARNING: call this method on the thread that holds the window. The
+    /// launcher calls CoInitializeEx with COINIT_APARTMENTTHREADED, and
+    /// Program.Main marks that thread STAThread. A thread from the pool joins
+    /// the other apartment, and Windows then gives the DirectPlay interface to
+    /// an apartment that ends with the work item.
+    /// </para>
     /// </summary>
     public void StartGame()
     {
@@ -525,20 +592,16 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
                 ? "You host this race. Give the address to the others."
                 : "You host this race. The app does not have your address yet. "
                     + "Wait a moment.";
-
-            ShowTheSteps(JoinInstructions.ForHost());
         }
         else if (host?.Address is not null)
         {
             HostTitle = $"{host.DisplayName} hosts this race.";
             HostAddress = host.Address.ToString();
-            ShowTheSteps(JoinInstructions.For(host.Address.ToString()));
         }
         else
         {
             HostTitle = NoHostTitle;
             HostAddress = string.Empty;
-            ShowTheSteps(NoSteps);
 
             // The host of this player stopped the race. That address now
             // belongs to a race that ended, so the launch button goes away.
@@ -546,16 +609,67 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
             // message gives him the reason.
             if (_role == LaunchRole.Join)
             {
-                _role = LaunchRole.None;
+                TakeTheRole(LaunchRole.None);
                 StatusMessage = HostStoppedMessage;
             }
         }
+
+        // One method answers for the steps, and the window calls it on every
+        // cycle. So a launch that needed no address cannot lose its steps two
+        // seconds later.
+        ShowTheSteps(TheStepsForNow());
 
         FaultMessage = lobby?.LastCycleFault is { } fault
             ? $"The last refresh failed: {fault.Message}"
             : string.Empty;
 
         UpdateTheButtons();
+    }
+
+    /// <summary>
+    /// Gives the steps that hold now. The list follows the state of the lobby
+    /// and the path of the last launch.
+    /// </summary>
+    /// <remarks>
+    /// The window must never tell the player to do something that the path
+    /// does not need. After a lobby launch the game sits in the race already,
+    /// and the step "Type the host address" would be false. After an ordinary
+    /// launch that step is the one that the player needs most.
+    /// </remarks>
+    private IReadOnlyList<string> TheStepsForNow()
+    {
+        var lobby = _lobby;
+
+        if (lobby is not null && lobby.IsHosting)
+        {
+            return _path == LaunchPath.Lobby
+                ? JoinInstructions.ForTheHostInTheRace()
+                : JoinInstructions.ForHost();
+        }
+
+        if (lobby?.CurrentHost?.Address is { } address)
+        {
+            return _path == LaunchPath.Lobby
+                ? JoinInstructions.ForThePlayerInTheRace()
+                : JoinInstructions.For(address.ToString());
+        }
+
+        return NoSteps;
+    }
+
+    /// <summary>
+    /// Writes the role of the player, and forgets the path of the last launch.
+    /// </summary>
+    /// <remarks>
+    /// The steps follow that path. A player who hosted through the lobby, then
+    /// stopped the race, and then joined another host would otherwise still
+    /// read that the game sits in a race. He must press the launch button
+    /// again, and the window must ask nothing of him until he does.
+    /// </remarks>
+    private void TakeTheRole(LaunchRole role)
+    {
+        _role = role;
+        _path = LaunchPath.None;
     }
 
     public async ValueTask DisposeAsync()
@@ -565,6 +679,14 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         _shutdown.Cancel();
         await StopTheLobbyAsync();
+
+        // The session goes last, and it goes on the thread that closed the
+        // window. The same thread called Launch, so the release reaches the
+        // apartment that holds the DirectPlay interface. A session whose game
+        // still runs releases nothing, and the process ends in any case.
+        _session?.Dispose();
+        _session = null;
+
         _shutdown.Dispose();
     }
 
@@ -651,7 +773,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         // A new service hosts nothing, and it knows no host. So the role of
         // the player goes with the old service, and the launch button waits
         // for Host or Join again.
-        _role = LaunchRole.None;
+        TakeTheRole(LaunchRole.None);
 
         if (lobby is null) return;
 
@@ -675,6 +797,14 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
             ShowTheChecks(results);
             _preflightPassed = PreflightRunner.AllPassed(results);
 
+            // The advisory checks buy the lobby path and nothing else, so the
+            // window reads them here and PreflightRunner.AllPassed reads the
+            // blocking results. A list that holds no advisory check gives
+            // true, as an empty list does.
+            _advisoryChecksPassed = results
+                .Where(result => !result.Blocks)
+                .All(result => result.Status == CheckStatus.Pass);
+
             // The panel opens for an advisory check too, and only the gate on
             // Host and Join lets that check go. A panel that closed over an
             // advisory row would hide the one thing that the app offers the
@@ -683,7 +813,10 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
+            // No test can see the second line, for the reason that
+            // MarkTheChecksStale gives. Both flags go together all the same.
             _preflightPassed = false;
+            _advisoryChecksPassed = false;
         }
     }
 
@@ -741,17 +874,143 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private void StartTheGame()
     {
+        var result = TryTheRace();
+
+        if (result is { Started: true, Session: { } session })
+        {
+            // The app holds this session for as long as the game may run. It
+            // owns the DirectPlay interface and the memory that MM2 reads
+            // about three seconds after the launch.
+            _session = session;
+            _path = LaunchPath.Lobby;
+            StatusMessage = result.Message;
+        }
+        else
+        {
+            // The app does what it did before the lobby path existed. The
+            // window shows the address, and the player types it into MM2. No
+            // player is worse off than he was.
+            _path = LaunchPath.Ordinary;
+            StatusMessage = StartTheGameTheOrdinaryWay() + AdviceOf(result);
+        }
+
+        // The steps follow the path that this press took. Without this line
+        // the window could ask a player to type an address that the lobby
+        // already gave to the game.
+        ShowTheSteps(TheStepsForNow());
+    }
+
+    /// <summary>
+    /// Asks the launcher to start MM2 in the race. It returns null when the
+    /// app asked nothing, and the window then says nothing about a path that
+    /// it did not take.
+    /// </summary>
+    private LobbyLaunchResult? TryTheRace()
+    {
+        // The two advisory checks buy this path and nothing else. A row that
+        // does not pass already names the reason and offers the Fix, so the
+        // window adds no second message here.
+        if (!_advisoryChecksPassed) return null;
+
+        var launcher = _environment.LobbyLauncher;
+
+        // The launcher answers for this computer and this process: Windows,
+        // the bit width, and the DirectPlay component. A false answer means
+        // that this path never opens, so the window stays quiet about it.
+        if (!launcher.CanLaunch) return null;
+
+        if (!TheSessionIsFree()) return null;
+
+        var request = TheRequest();
+        if (request is null) return null;
+
+        try
+        {
+            var result = launcher.Launch(request);
+            LaunchReport = result.Detail;
+            return result;
+        }
+        catch (Exception e)
+        {
+            // The launcher promises to throw nothing. The window catches all
+            // the same, because an exception here would take the ordinary
+            // start away too, and the player would get no game at all.
+            LaunchReport = $"The launcher threw {e.GetType().Name}: {e.Message}";
+            return LobbyLaunchResult.Failure(LobbyLaunchFault.Unexpected, LaunchReport);
+        }
+    }
+
+    /// <summary>
+    /// Builds the request for the role of this player. The app reads the
+    /// address of the host from the announcement, so the player types nothing.
+    /// </summary>
+    private LobbyLaunchRequest? TheRequest()
+    {
+        if (_role == LaunchRole.Host) return LobbyLaunchRequest.ToHost(_displayName);
+
+        var address = _lobby?.CurrentHost?.Address?.ToString();
+
+        return address is null ? null : LobbyLaunchRequest.ToJoin(address, _displayName);
+    }
+
+    /// <summary>
+    /// Closes the session of an earlier launch. It returns true when the app
+    /// holds no session any more.
+    /// </summary>
+    /// <remarks>
+    /// The launch button takes no guard against a second press. MM2 stops, and
+    /// the player must start it again without a new Host, because a new Host
+    /// would cost him his place in the lobby. So the bound on the sessions
+    /// lives here and not on the button.
+    ///
+    /// A session releases the DirectPlay interface only after the game process
+    /// ends. The press that follows a crash therefore finds no game, the old
+    /// session closes, and the app takes one new session in its place. A press
+    /// while the game still runs closes nothing, and the app then starts the
+    /// game the ordinary way. The app holds one session in every case.
+    /// </remarks>
+    private bool TheSessionIsFree()
+    {
+        if (_session is null) return true;
+
+        _session.Dispose();
+
+        if (_session.IsOpen) return false;
+
+        _session = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Starts MM2 the way that the app started it before the lobby path
+    /// existed. It returns the message for the player.
+    /// </summary>
+    private string StartTheGameTheOrdinaryWay()
+    {
         var path = _environment.Config.GamePath;
 
         try
         {
             _environment.LaunchGame(path);
-            StatusMessage = "MM2 started. Follow the steps above.";
+            return OrdinaryStartMessage;
         }
         catch (Exception e)
         {
-            StatusMessage = $"MM2 did not start: {e.Message}";
+            return $"MM2 did not start: {e.Message}";
         }
+    }
+
+    /// <summary>
+    /// Gives the text of a lobby launch that failed. It gives an empty text
+    /// when the app made no attempt.
+    /// </summary>
+    private static string AdviceOf(LobbyLaunchResult? result)
+    {
+        if (result is null) return string.Empty;
+
+        return result.PlayerAction is { } action
+            ? $" {result.Message} {action}"
+            : $" {result.Message}";
     }
 
     /// <summary>
@@ -843,6 +1102,14 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private void MarkTheChecksStale()
     {
         _preflightPassed = false;
+
+        // No test can see this line, because _preflightPassed gates the launch
+        // button first and the line above already took that away. The line
+        // stands here all the same: the rule of this method is that no result
+        // of the last run holds, and a reader must not have to prove the
+        // exception for one of the six checks.
+        _advisoryChecksPassed = false;
+
         UpdateTheButtons();
 
         if (CheckRows.Count == 0) return;

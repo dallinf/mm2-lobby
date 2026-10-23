@@ -97,6 +97,30 @@ public class LobbyViewModelTests : IDisposable
         return check;
     }
 
+    /// <summary>
+    /// Adds a check that gives advice. The window reads these checks, and not
+    /// PreflightRunner.AllPassed, before it takes the lobby path.
+    /// </summary>
+    private FakeCheck AddAdvisoryCheck(string name, CheckStatus status = CheckStatus.Pass)
+    {
+        var check = new FakeCheck(name, status) { Blocks = false };
+        _environment.Checks.Add(new CheckEntry(check));
+        return check;
+    }
+
+    /// <summary>
+    /// Opens the lobby path: one check that blocks and passes, one check that
+    /// gives advice and passes, and a launcher that can run. It returns the
+    /// advisory check, so a test can make that one fail.
+    /// </summary>
+    private FakeCheck OpenTheLobbyPath()
+    {
+        AddCheck("ZeroTier");
+        var advisory = AddAdvisoryCheck("DirectPlay registration");
+        _environment.Launcher.CanLaunch = true;
+        return advisory;
+    }
+
     private LobbyViewModel Build()
     {
         if (_environment.Checks.Count == 0) AddCheck("ZeroTier");
@@ -1477,5 +1501,571 @@ public class LobbyViewModelTests : IDisposable
         await model.DisposeAsync();
 
         Assert.Single(_environment.Transports);
+    }
+
+    // --- The lobby launch ---------------------------------------------------
+
+    [Fact]
+    public async Task The_launch_button_asks_the_lobby_to_start_the_race_for_the_host()
+    {
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        var request = Assert.Single(_environment.Launcher.Requests);
+        Assert.Equal(LobbyRole.Host, request.Role);
+        Assert.Null(request.HostAddress);
+    }
+
+    [Fact]
+    public async Task The_launch_button_asks_the_lobby_to_join_the_address_that_the_app_knows()
+    {
+        // The app reads the address from the announcement of the host. So a
+        // player who joins types no address at any point.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+        model.StartGame();
+
+        var request = Assert.Single(_environment.Launcher.Requests);
+        Assert.Equal(LobbyRole.Join, request.Role);
+        Assert.Equal("10.147.17.50", request.HostAddress);
+    }
+
+    [Fact]
+    public async Task The_lobby_launch_carries_the_name_of_the_player()
+    {
+        OpenTheLobbyPath();
+        _environment.Config.DisplayName = "dallin";
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Equal("dallin", Assert.Single(_environment.Launcher.Requests).PlayerName);
+    }
+
+    [Fact]
+    public async Task A_lobby_launch_that_works_starts_no_second_game()
+    {
+        // DirectPlay started the game. A second start would put two copies of
+        // MM2 on the screen, and one of them would sit in no race.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task A_lobby_launch_that_works_says_that_the_game_is_in_the_race()
+    {
+        // The window shows the sentence of the launcher, and not the sentence
+        // of the ordinary start. "MM2 started. Follow the steps above." would
+        // send the player to steps that he does not need.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Equal("MM2 Lobby started the game in the race.", model.StatusMessage);
+    }
+
+    [Fact]
+    public async Task A_lobby_launch_that_works_tells_the_host_that_he_types_no_address()
+    {
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Equal(JoinInstructions.ForTheHostInTheRace(), model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task A_lobby_launch_that_works_tells_a_player_who_joined_that_he_types_no_address()
+    {
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+        model.StartGame();
+
+        Assert.Equal(JoinInstructions.ForThePlayerInTheRace(), model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task The_window_never_asks_a_player_in_the_race_to_type_an_address()
+    {
+        // This is the defect that this project met five times: a screen that
+        // asserts something that the path did not do. The lobby gave the
+        // address to the game, so no step may ask the player for it.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+        model.StartGame();
+
+        Assert.NotEmpty(model.JoinSteps);
+        Assert.DoesNotContain(model.JoinSteps, step => step.Contains("10.147.17.50"));
+        Assert.DoesNotContain(model.JoinSteps, step => step.Contains("Type"));
+    }
+
+    [Fact]
+    public async Task The_steps_of_a_lobby_launch_hold_through_the_cycles_that_follow()
+    {
+        // The window reads the state once every two seconds. Without one
+        // source for the steps, that read would put the ordinary steps back
+        // and ask the host for a menu that he never opened.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        _host.Tick();
+        _host.Tick();
+
+        Assert.Equal(JoinInstructions.ForTheHostInTheRace(), model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task The_window_still_shows_the_address_after_a_lobby_launch()
+    {
+        // The address is information and not an instruction. A friend whose
+        // own lobby path is shut still needs it.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        // The refresh reads the state again. The address must survive it.
+        _host.Tick();
+
+        Assert.Equal("10.147.17.42", model.HostAddress);
+    }
+
+    [Fact]
+    public async Task A_lobby_launch_that_fails_starts_the_game_the_ordinary_way()
+    {
+        OpenTheLobbyPath();
+        _environment.Launcher.Fails(LobbyLaunchFault.DirectPlayRefused);
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Equal(@"C:\Games\MM2\midtown2.exe", Assert.Single(_environment.LaunchedPaths));
+    }
+
+    [Fact]
+    public async Task A_lobby_launch_that_fails_shows_the_steps_of_the_ordinary_way()
+    {
+        // The player starts MM2 himself here, so he needs every step. This is
+        // the state that every player had before the lobby path existed.
+        OpenTheLobbyPath();
+        _environment.Launcher.Fails(LobbyLaunchFault.DirectPlayRefused);
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+        model.StartGame();
+
+        Assert.Equal(JoinInstructions.For("10.147.17.50"), model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task A_lobby_launch_that_fails_names_the_reason_and_the_step_for_the_player()
+    {
+        OpenTheLobbyPath();
+        _environment.Launcher.Fails(LobbyLaunchFault.GameNotRegistered);
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        var advice = LobbyLaunchMessages.For(LobbyLaunchFault.GameNotRegistered);
+
+        // The game started. That sentence stands first, because it is the one
+        // that answers the press of the player.
+        Assert.StartsWith("MM2 started. Follow the steps above.", model.StatusMessage);
+        Assert.Contains(advice.Message, model.StatusMessage);
+        Assert.Contains(advice.PlayerAction, model.StatusMessage);
+    }
+
+    [Fact]
+    public async Task A_launcher_that_throws_still_starts_the_game()
+    {
+        // The launcher promises to throw nothing. If it breaks that promise,
+        // the player must still get his game.
+        OpenTheLobbyPath();
+        _environment.Launcher.Fault = new InvalidOperationException("the vtable is wrong");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Single(_environment.LaunchedPaths);
+        Assert.StartsWith("MM2 started. Follow the steps above.", model.StatusMessage);
+        Assert.Contains("the vtable is wrong", model.LaunchReport);
+    }
+
+    [Fact]
+    public async Task The_window_makes_no_lobby_launch_while_an_advisory_check_does_not_pass()
+    {
+        // The row of that check already names the reason and offers the Fix.
+        OpenTheLobbyPath().Status = CheckStatus.Fail;
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Empty(_environment.Launcher.Requests);
+        Assert.Single(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task The_window_makes_no_lobby_launch_while_one_of_two_advisory_checks_fails()
+    {
+        // Each advisory check names a condition of the lobby path. So every
+        // one of them must pass, and not merely one of them.
+        OpenTheLobbyPath();
+        AddAdvisoryCheck("Compatibility mode", CheckStatus.Fail);
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Empty(_environment.Launcher.Requests);
+        Assert.Single(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task A_second_press_of_Join_takes_the_steps_of_the_race_away()
+    {
+        // The player announced himself again, and he has not pressed the
+        // launch button since. The window must ask nothing of him that it
+        // cannot prove, and it must not wait two seconds to stop asking.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+        model.StartGame();
+        await model.JoinAsync();
+
+        Assert.Equal(JoinInstructions.For("10.147.17.50"), model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task The_window_makes_no_lobby_launch_while_the_launcher_refuses()
+    {
+        // A 64 bit copy of the app cannot reach DirectPlay. The player still
+        // races: the app starts the game, and he types the address.
+        OpenTheLobbyPath();
+        _environment.Launcher.CanLaunch = false;
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Empty(_environment.Launcher.Requests);
+        Assert.Single(_environment.LaunchedPaths);
+        Assert.Equal(JoinInstructions.ForHost(), model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task A_launch_that_the_app_never_tried_says_nothing_about_the_lobby()
+    {
+        // The player reads the one sentence that the app gave him before this
+        // path existed, and nothing more.
+        OpenTheLobbyPath();
+        _environment.Launcher.CanLaunch = false;
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Equal("MM2 started. Follow the steps above.", model.StatusMessage);
+        Assert.False(model.HasLaunchReport);
+    }
+
+    [Fact]
+    public async Task The_window_holds_the_session_of_a_lobby_launch()
+    {
+        // The session owns the DirectPlay interface and the memory that MM2
+        // reads about three seconds after the launch. A release here sent four
+        // runs of the spike back to the menus of the game.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        var session = Assert.Single(_environment.Launcher.Sessions);
+        Assert.True(session.IsOpen);
+        Assert.Equal(0, session.DisposeCount);
+    }
+
+    [Fact]
+    public async Task The_window_closes_the_session_when_it_closes()
+    {
+        OpenTheLobbyPath();
+
+        var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+        await model.DisposeAsync();
+
+        Assert.False(Assert.Single(_environment.Launcher.Sessions).IsOpen);
+    }
+
+    [Fact]
+    public async Task A_second_press_closes_the_first_session_and_holds_one()
+    {
+        // MM2 stopped, so the player presses again. The app must not keep one
+        // session for every press.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+        model.StartGame();
+
+        Assert.Equal(2, _environment.Launcher.Sessions.Count);
+        Assert.False(_environment.Launcher.Sessions[0].IsOpen);
+        Assert.True(_environment.Launcher.Sessions[1].IsOpen);
+    }
+
+    [Fact]
+    public async Task The_window_closes_one_session_one_time_only()
+    {
+        // The window forgets a session that closed. Without that, it would
+        // call into the same session on every press that follows.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        // The two presses below take no new session, so the first session is
+        // the only one that the window can close.
+        _environment.Launcher.Fails(LobbyLaunchFault.DirectPlayRefused);
+        model.StartGame();
+        model.StartGame();
+
+        Assert.Equal(1, _environment.Launcher.Sessions[0].DisposeCount);
+    }
+
+    [Fact]
+    public async Task A_press_while_the_game_runs_keeps_the_one_session()
+    {
+        // The session releases nothing while the game runs, because a release
+        // there sends the player back to the menus. So the app takes no second
+        // session.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        _environment.Launcher.Sessions[0].GameRuns = true;
+        model.StartGame();
+
+        Assert.Single(_environment.Launcher.Sessions);
+        Assert.True(_environment.Launcher.Sessions[0].IsOpen);
+    }
+
+    [Fact]
+    public async Task A_press_while_the_game_runs_starts_the_game_the_ordinary_way()
+    {
+        // The player presses, and he gets a game. The steps then name the
+        // ordinary path, because that is the path that this press took.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        _environment.Launcher.Sessions[0].GameRuns = true;
+        model.StartGame();
+
+        Assert.Single(_environment.LaunchedPaths);
+        Assert.Equal(JoinInstructions.ForHost(), model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task The_window_keeps_the_report_of_the_last_lobby_launch()
+    {
+        // The step of a failed launch asks the player to send a report. Only
+        // this text holds the answer of each DirectPlay call.
+        OpenTheLobbyPath();
+        _environment.Launcher.Fails(LobbyLaunchFault.DirectPlayRefused, "RunApplication: 0x80004005");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Equal("RunApplication: 0x80004005", model.LaunchReport);
+        Assert.True(model.HasLaunchReport);
+    }
+
+    [Fact]
+    public async Task The_window_holds_no_report_before_a_launch()
+    {
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Equal(string.Empty, model.LaunchReport);
+        Assert.False(model.HasLaunchReport);
+    }
+
+    [Fact]
+    public async Task A_second_press_of_Host_takes_the_steps_of_the_race_away()
+    {
+        // The race ended. The game of the last launch belongs to that race.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+        await model.HostAsync();
+
+        Assert.Empty(model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task Check_again_takes_the_steps_of_the_race_away()
+    {
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+        await model.CheckAgainAsync();
+
+        Assert.Empty(model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task A_host_that_stops_takes_the_steps_of_the_race_from_a_player_who_joined()
+    {
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+        model.StartGame();
+
+        Assert.Equal(JoinInstructions.ForThePlayerInTheRace(), model.JoinSteps);
+
+        DeliverPeer(hosting: false);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.Empty(model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task Host_after_a_lobby_launch_as_a_player_who_joined_takes_the_race_steps_away()
+    {
+        // The player joined through the lobby, and he then took the host role.
+        // He must press the launch button again, and the window must ask
+        // nothing of him until he does.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+        model.StartGame();
+        await model.HostAsync();
+
+        Assert.Equal(JoinInstructions.ForHost(), model.JoinSteps);
     }
 }

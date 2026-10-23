@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Time.Testing;
 using Mm2Lobby.App;
 using Mm2Lobby.Core.Configuration;
+using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
 using Mm2Lobby.Core.ZeroTier;
@@ -34,6 +35,11 @@ public sealed class FakeLobbyEnvironment : ILobbyEnvironment, IDisposable
     public string AppVersion { get; set; } = "1.0.0.0";
 
     public ConfigStore ConfigStore { get; }
+
+    /// <summary>The launcher that the window asks. A test scripts its answer.</summary>
+    public FakeLobbyLauncher Launcher { get; } = new();
+
+    ILobbyLauncher ILobbyEnvironment.LobbyLauncher => Launcher;
 
     public IZeroTierClient ZeroTier { get; set; } = new FakeZeroTierClient();
 

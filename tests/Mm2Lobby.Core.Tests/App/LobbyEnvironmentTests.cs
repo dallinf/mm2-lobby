@@ -373,6 +373,18 @@ public class LobbyEnvironmentTests : IDisposable
     }
 
     [Fact]
+    public void The_environment_gives_one_lobby_launcher()
+    {
+        // The launcher holds no state between calls, so one instance serves
+        // every press. A new instance for each read would also build a new
+        // allocator and read the registry route again.
+        var environment = Build();
+
+        Assert.NotNull(environment.LobbyLauncher);
+        Assert.Same(environment.LobbyLauncher, environment.LobbyLauncher);
+    }
+
+    [Fact]
     public void SaveConfig_writes_the_one_configuration()
     {
         var environment = Build();

@@ -36,7 +36,14 @@
 
        These numbers come from macOS. Windows draws the text at another size,
        so they move there. The cap gives the list away before it clips the
-       buttons, which is the right order. -->
+       buttons, which is the right order.
+
+       The report of the last start adds about 36 to the host panel. That
+       panel appears after the player presses the launch button, and MM2 then
+       covers the screen. The list of peers gives that height, because the
+       list holds the star row. The cap of the Setup panel does not move,
+       because that panel is shut by then: every check passed, or the player
+       read the rows and pressed the button all the same. -->
 
   <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto">
 
@@ -175,6 +182,20 @@
                  IsVisible="{Binding HasStatusMessage}" Foreground="Gray" />
       <TextBlock Text="{Binding FaultMessage}" TextWrapping="Wrap"
                  IsVisible="{Binding HasFaultMessage}" FontWeight="Bold" />
+
+      <!-- The report of the last start through the DirectPlay lobby. The step
+           of a failed start asks the player to send a report to the person who
+           runs the group, and only this text holds the answer of each
+           DirectPlay call. The panel appears after the player presses the
+           launch button, and it is shut, so it costs the window 32 and not the
+           height of the text. -->
+      <Expander Header="The report of the last start" IsExpanded="False"
+                IsVisible="{Binding HasLaunchReport}"
+                HorizontalAlignment="Stretch" Margin="0,4,0,0">
+        <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto">
+          <SelectableTextBlock Text="{Binding LaunchReport}" TextWrapping="Wrap" />
+        </ScrollViewer>
+      </Expander>
 
       <!-- Host and Join announce the player. The third button starts MM2.
            MM2 covers the whole screen, so the address above must reach the

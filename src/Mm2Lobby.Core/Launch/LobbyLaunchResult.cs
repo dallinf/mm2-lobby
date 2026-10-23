@@ -58,7 +58,12 @@ public sealed record LobbyLaunchResult
         return new LobbyLaunchResult(
             session,
             LobbyLaunchFault.None,
-            "MM2 Lobby started the game in a multiplayer session.",
+
+            // The player reads "race" everywhere else in the window, and the
+            // steps beside this sentence use that word too. One meaning takes
+            // one word, so this sentence does not say "session" as well.
+            // "Session" stays in the names of the code and in the comments.
+            "MM2 Lobby started the game in the race.",
             null,
             detail);
     }

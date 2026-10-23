@@ -7,6 +7,7 @@ using Mm2Lobby.Core.Processes;
 using Mm2Lobby.Core.ZeroTier;
 using Mm2Lobby.Windows;
 using Mm2Lobby.Windows.Checks;
+using Mm2Lobby.Windows.Lobby;
 
 namespace Mm2Lobby.App;
 
@@ -110,6 +111,12 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
     public AppConfig Config { get; }
 
     public string AppVersion { get; }
+
+    /// <summary>
+    /// The one launcher of the process. It holds no state between calls, so
+    /// one instance serves every press of the launch button.
+    /// </summary>
+    public ILobbyLauncher LobbyLauncher { get; } = new DirectPlayLobbyLauncher();
 
     public IReadOnlyList<CheckEntry> CreateChecks() => new[]
     {

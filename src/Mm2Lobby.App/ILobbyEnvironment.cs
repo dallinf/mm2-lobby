@@ -1,4 +1,5 @@
 using Mm2Lobby.Core.Configuration;
+using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 
 namespace Mm2Lobby.App;
@@ -22,6 +23,13 @@ public interface ILobbyEnvironment
     /// against this value.
     /// </summary>
     string AppVersion { get; }
+
+    /// <summary>
+    /// The launcher that starts MM2 in the race. The window asks it one time
+    /// for each press of the launch button, and it holds the session that a
+    /// launch which works gives back.
+    /// </summary>
+    ILobbyLauncher LobbyLauncher { get; }
 
     /// <summary>Builds the preflight checks, in the order that the window shows them.</summary>
     IReadOnlyList<CheckEntry> CreateChecks();
