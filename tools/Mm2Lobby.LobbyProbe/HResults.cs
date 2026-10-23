@@ -14,6 +14,14 @@ namespace Mm2Lobby.LobbyProbe;
 /// severity bit is 1, the facility is 0x877, and the low 16 bits hold a
 /// decimal code such as 30 or 370.
 /// </para>
+/// <para>
+/// Runs on Windows 11 validated the GUID values, the vtable slots and the
+/// struct layouts of the probe. Those runs validated nothing in this file. A
+/// successful call returns S_OK, so a success teaches us no error number. A
+/// strings dump of midtown2.exe shows the names DPERR_INVALIDFLAGS and
+/// DPERR_UNAVAILABLE, which proves that those two names exist. It does not
+/// prove that the numbers beside them here are right.
+/// </para>
 /// </summary>
 internal static class HResults
 {

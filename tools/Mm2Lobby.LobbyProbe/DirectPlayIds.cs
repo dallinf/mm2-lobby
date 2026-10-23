@@ -3,11 +3,15 @@ namespace Mm2Lobby.LobbyProbe;
 /// <summary>
 /// The GUID values of the legacy DirectPlay lobby API.
 /// <para>
-/// WARNING: every GUID in this file comes from memory. The author could not
-/// open dplay.h or dplobby.h, and could not run one line of this code. A wrong
-/// GUID is the most likely cause of a failure in the probe. The probe prints
-/// each GUID that it uses, so the owner can compare the printed value against
-/// the header or against the registry.
+/// The author wrote every GUID in this file from memory, and could not open
+/// dplay.h or dplobby.h. Four runs on Windows 11 then validated them. A
+/// control run that registered Notepad as a lobby application returned S_OK
+/// and put Notepad on the screen, so the lobby object, the compound address
+/// and RunApplication all worked with these values.
+/// </para>
+/// <para>
+/// The probe still prints each GUID that it uses. The print costs nothing and
+/// it keeps the record complete.
 /// </para>
 /// </summary>
 internal static class DirectPlayIds
@@ -47,7 +51,7 @@ internal static class DirectPlayIds
 
     /// <summary>
     /// This method prints every GUID above, with the name that the header
-    /// gives it. The owner can then check each value.
+    /// gives it.
     /// </summary>
     public static void PrintAll()
     {
@@ -67,11 +71,14 @@ internal static class DirectPlayIds
 /// <summary>
 /// The flags of DPLCONNECTION.dwFlags.
 /// <para>
-/// WARNING: both values come from memory. dplobby.h sets
-/// DPLCONNECTION_CREATESESSION to DPOPEN_CREATE and DPLCONNECTION_JOINSESSION
-/// to DPOPEN_JOIN. The author believes DPOPEN_JOIN is 1 and DPOPEN_CREATE is
-/// 2. If the probe reports an invalid flags error, read these two numbers
-/// first.
+/// dplobby.h sets DPLCONNECTION_CREATESESSION to DPOPEN_CREATE and
+/// DPLCONNECTION_JOINSESSION to DPOPEN_JOIN. The author wrote both numbers
+/// from memory. A run on Windows 11 then validated CREATESESSION, because
+/// RunApplication returned S_OK with the value 2.
+/// </para>
+/// <para>
+/// WARNING: no run has validated JOINSESSION. The host case needs no second
+/// computer, so every run so far used the host case.
 /// </para>
 /// </summary>
 internal static class LobbyConnectionFlags
@@ -83,11 +90,22 @@ internal static class LobbyConnectionFlags
 /// <summary>
 /// The vtable slot of each method of IDirectPlayLobby3A.
 /// <para>
-/// WARNING: the whole order comes from memory. The DirectPlay headers list the
-/// methods of each interface version in alphabetical order, and the author
-/// used that rule to rebuild the list. A wrong slot number calls the wrong
-/// function. The probe prints the slot that it reads, and the address in that
-/// slot, before every call.
+/// The author rebuilt the whole order from memory. The DirectPlay headers list
+/// the methods of each interface version in alphabetical order, and the author
+/// used that rule.
+/// </para>
+/// <para>
+/// Runs on Windows 11 validated slot 0, slot 2, slot 10 and slot 14. Those
+/// four slots bracket the list: slot 10 is RunApplication, the 8th method of
+/// IDirectPlayLobby, and slot 14 is CreateCompoundAddress, the 1st method of
+/// IDirectPlayLobby2. Slot 11, slot 12 and slot 13 therefore hold the last
+/// three methods of IDirectPlayLobby, and the alphabetical rule puts
+/// SetLobbyMessageEvent at slot 13. That is a deduction from a validated
+/// bracket, and not a run.
+/// </para>
+/// <para>
+/// WARNING: a wrong slot number calls the wrong function. The probe prints the
+/// slot that it reads, and the address in that slot, before every call.
 /// </para>
 /// </summary>
 internal static class LobbySlots

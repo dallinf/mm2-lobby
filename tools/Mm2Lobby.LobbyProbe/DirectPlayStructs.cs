@@ -5,13 +5,20 @@ namespace Mm2Lobby.LobbyProbe;
 /// <summary>
 /// DPSESSIONDESC2 from dplay.h.
 /// <para>
-/// WARNING: the author rebuilt this layout from memory. dplay.h declares the
-/// two name fields as a union of a wide pointer and an ANSI pointer, so one
-/// pointer field holds either kind of string. It declares the six fields after
-/// the names as DWORD_PTR, which is 8 bytes in a 64 bit process and 4 bytes in
-/// a 32 bit process. This struct uses nuint for those six fields for that
-/// reason. If the size that the probe prints is wrong, DirectPlay rejects the
-/// struct, because dwSize must match.
+/// The author rebuilt this layout from memory. A run on Windows 11 then
+/// validated it, because RunApplication returned S_OK and started a process.
+/// </para>
+/// <para>
+/// dplay.h declares the two name fields as a union of a wide pointer and an
+/// ANSI pointer, so one pointer field holds either kind of string. It declares
+/// the six fields after the names as DWORD_PTR, which is 8 bytes in a 64 bit
+/// process and 4 bytes in a 32 bit process. This struct uses nuint for those
+/// six fields for that reason.
+/// </para>
+/// <para>
+/// WARNING: do not write a number into the Size field by hand. DirectPlay
+/// rejects the struct when dwSize does not match. The probe sets the field
+/// from Marshal.SizeOf, so the number follows the build.
 /// </para>
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
@@ -63,7 +70,10 @@ internal struct DpSessionDesc2
 /// <summary>
 /// DPNAME from dplay.h. The two name fields are unions of a wide pointer and
 /// an ANSI pointer, the same as in DPSESSIONDESC2.
-/// <para>WARNING: the author rebuilt this layout from memory.</para>
+/// <para>
+/// The author rebuilt this layout from memory. A run on Windows 11 then
+/// validated it, because RunApplication returned S_OK and started a process.
+/// </para>
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 internal struct DpName
@@ -84,7 +94,10 @@ internal struct DpName
 /// <summary>
 /// DPLCONNECTION from dplobby.h. The lobby fills this struct and gives it to
 /// RunApplication.
-/// <para>WARNING: the author rebuilt this layout from memory.</para>
+/// <para>
+/// The author rebuilt this layout from memory. A run on Windows 11 then
+/// validated it, because RunApplication returned S_OK and started a process.
+/// </para>
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 internal struct DplConnection
@@ -114,7 +127,10 @@ internal struct DplConnection
 /// <summary>
 /// DPCOMPOUNDADDRESSELEMENT from dplobby.h. Each element is one chunk of a
 /// compound address.
-/// <para>WARNING: the author rebuilt this layout from memory.</para>
+/// <para>
+/// The author rebuilt this layout from memory. A run on Windows 11 then
+/// validated it, because RunApplication returned S_OK and started a process.
+/// </para>
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 internal struct DpCompoundAddressElement

@@ -34,6 +34,12 @@ internal static partial class Ole32
 /// owner then sees whether the slot held an address at all.
 /// </para>
 /// <para>
+/// Four runs on Windows 11 validated slot 0, slot 2, slot 10 and slot 14. A
+/// control run that registered Notepad as a lobby application returned S_OK
+/// and put Notepad on the screen. Slot 13 comes from a deduction, not from a
+/// run. See the remark on LobbySlots.
+/// </para>
+/// <para>
 /// WARNING: a wrong slot number or a wrong signature calls native code with
 /// the wrong arguments. The probe catches a managed exception, and it cannot
 /// catch a hard crash inside dplayx.dll. If the program stops with no further
@@ -110,6 +116,34 @@ internal static unsafe class LobbyInterop
         {
             return call(instance, elements, elementCount, buffer, sizePointer);
         }
+    }
+
+    /// <summary>
+    /// IDirectPlayLobby::SetLobbyMessageEvent. DirectPlay signals the event
+    /// when the game sends a lobby message back to the lobby.
+    /// <para>
+    /// The probe calls this method after a successful RunApplication, and it
+    /// does not call ReceiveLobbyMessage. A read of the message needs the
+    /// DPLMSG structs, and that is new interop that nobody can test here. The
+    /// signal alone answers the question: did MM2 reach the lobby at all?
+    /// </para>
+    /// <para>
+    /// WARNING: the order of the arguments comes from memory. The flags
+    /// argument stands first and must be 0, the application id stands second,
+    /// and the event handle stands third.
+    /// </para>
+    /// </summary>
+    public static int SetLobbyMessageEvent(
+        IntPtr instance,
+        uint flags,
+        uint applicationId,
+        IntPtr receiveEvent)
+    {
+        var address = Announce(instance, LobbySlots.SetLobbyMessageEvent, "SetLobbyMessageEvent");
+        if (address == IntPtr.Zero) return unchecked((int)0x80004003);
+
+        var call = (delegate* unmanaged[Stdcall]<IntPtr, uint, uint, IntPtr, int>)address;
+        return call(instance, flags, applicationId, receiveEvent);
     }
 
     /// <summary>
