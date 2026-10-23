@@ -24,6 +24,19 @@ public class ZeroTierClientTests
     }
 
     [Fact]
+    public async Task The_client_runs_the_command_file_that_it_was_given()
+    {
+        // On Windows the locator gives the path of zerotier-cli.bat, because
+        // Windows does not find the plain name. The client must run that path.
+        const string bat = @"C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat";
+        var runner = new FakeProcessRunner();
+
+        await new ZeroTierClient(runner, bat).GetStatusAsync(default);
+
+        Assert.Equal(new[] { $"{bat} -j info" }, runner.Calls);
+    }
+
+    [Fact]
     public async Task GetStatusAsync_reports_the_service_offline()
     {
         var runner = new FakeProcessRunner()

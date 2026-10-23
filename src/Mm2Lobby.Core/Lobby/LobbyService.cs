@@ -181,9 +181,15 @@ public sealed class LobbyService : IAsyncDisposable
 
         // PeerTable rejects a name that is too long. Every peer runs that
         // check, so a long name here stops every peer from showing this app.
-        var player = _config.DisplayName.Length > PeerTable.MaxPlayerNameLength
-            ? _config.DisplayName[..PeerTable.MaxPlayerNameLength]
-            : _config.DisplayName;
+        //
+        // This method reads the name one time, into a local. The window owns
+        // the one AppConfig, and it writes the name while the pump runs. With
+        // two reads, a name of 3 characters can replace a name of 40 between
+        // them, and the truncation then throws.
+        var name = _config.DisplayName;
+        var player = name.Length > PeerTable.MaxPlayerNameLength
+            ? name[..PeerTable.MaxPlayerNameLength]
+            : name;
 
         var announcement = new Announcement
         {

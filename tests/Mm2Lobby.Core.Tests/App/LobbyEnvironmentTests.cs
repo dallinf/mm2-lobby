@@ -6,6 +6,7 @@ using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
 using Mm2Lobby.Core.Preflight;
+using Mm2Lobby.Core.Processes;
 using Mm2Lobby.Core.Tests.Fakes;
 using Mm2Lobby.Windows.Checks;
 
@@ -21,7 +22,16 @@ public class LobbyEnvironmentTests : IDisposable
     private readonly string _folder = Path.Combine(
         Path.GetTempPath(), $"mm2env-{Guid.NewGuid():N}");
 
+    /// <summary>
+    /// A folder that no computer holds. Only the value that a test gives the
+    /// environment can carry this name into the text of a check.
+    /// </summary>
+    private const string TestFolder = @"X:\a folder that only this test names";
+
     private readonly FakeZeroTierClient _zeroTier = new();
+    private readonly ZeroTierCommand _zeroTierCommand =
+        new("zerotier-cli", new[] { TestFolder });
+
     private readonly FakeProcessRunner _plainRunner = new();
     private readonly FakeProcessRunner _elevatedRunner = new();
     private readonly List<FakePeerTransport> _transports = new();
@@ -29,6 +39,7 @@ public class LobbyEnvironmentTests : IDisposable
 
     private string? _chosenGamePath;
     private string? _registryGamePath;
+    private string? _accountId = "S-1-5-21-9999999999-8888888888-7777777777-1001";
 
     public void Dispose()
     {
@@ -83,6 +94,8 @@ public class LobbyEnvironmentTests : IDisposable
     private LobbyEnvironment BuildFromTheFile(TimeProvider? timeProvider) => new(
         Store,
         _zeroTier,
+        _zeroTierCommand,
+        () => _accountId,
         _plainRunner,
         _elevatedRunner,
         () =>
@@ -240,6 +253,48 @@ public class LobbyEnvironmentTests : IDisposable
             .Where(item => item.Check.Name != "Windows Firewall");
 
         Assert.All(others, item => Assert.Null(item.RepairHint));
+    }
+
+    [Fact]
+    public async Task The_environment_takes_the_located_ZeroTier_command_as_a_value()
+    {
+        // The app must read the file system one time, at its start. So the
+        // environment takes the command as a value, and it cannot look for the
+        // command again. Every check that it builds names the one value.
+        var environment = Build();
+        _zeroTier.Status = null;
+
+        // The plain runner knows no command, so it answers NotRunExitCode.
+        // The check then reports that it found no ZeroTier command.
+        var first = await CheckNamed(environment, "ZeroTier").RunAsync(default);
+        var second = await CheckNamed(environment, "ZeroTier").RunAsync(default);
+
+        Assert.Contains(TestFolder, first.FixDescription);
+        Assert.Contains(TestFolder, second.FixDescription);
+    }
+
+    [Fact]
+    public async Task The_token_grant_runs_with_administrator_rights()
+    {
+        // A command with the rights of the player cannot change the
+        // permission of the token file. So the grant must take the elevated
+        // runner, and not the plain one.
+        var environment = Build();
+        _zeroTier.Status = null;
+        _plainRunner.Returns(
+            "zerotier-cli",
+            "-j info",
+            new ProcessResult(
+                ZeroTierFaultReader.TokenExitCode,
+                "authtoken.secret not found or readable (try again as root)",
+                ""));
+
+        await CheckNamed(environment, "ZeroTier").FixAsync(default);
+
+        var call = Assert.Single(_elevatedRunner.Calls);
+        Assert.StartsWith("icacls.exe ", call);
+        Assert.Contains("authtoken.secret", call);
+        Assert.Contains($"/grant *{_accountId}:(R)", call);
     }
 
     [Fact]

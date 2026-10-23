@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using Mm2Lobby.Core.Configuration;
 using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
@@ -20,7 +21,68 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private const string NoHostTitle = "No one hosts a race now.";
     private const string WorkingMessage = "The app is busy. Please wait.";
 
+    /// <summary>
+    /// The label of the launch button for the host. The host starts the race,
+    /// so the button can name the race.
+    /// </summary>
+    private const string StartRaceLabel = "Start the race";
+
+    /// <summary>
+    /// The label of the launch button for a player who joins. That player does
+    /// not start the race, so the button names the game only. The window also
+    /// shows this label while the button waits for Host or Join, because the
+    /// label is true for every player who starts MM2.
+    /// </summary>
+    private const string StartGameLabel = "Start the game";
+
+    /// <summary>
+    /// The message for a player who joined a host that then stopped. The app
+    /// takes the launch button away at the same time, and a button that
+    /// disappears tells the player nothing about the reason.
+    /// </summary>
+    private const string HostStoppedMessage =
+        "The host stopped the race. Wait for a new host.";
+
+    /// <summary>
+    /// The advice for a network ID that breaks the rule. The app has no
+    /// settings screen, so this text is the only place that tells the player
+    /// the rule and the page that shows the ID.
+    /// </summary>
+    /// <remarks>
+    /// The text reads the length from NetworkIdRule. A message that holds the
+    /// number itself becomes a lie as soon as the rule changes.
+    /// </remarks>
+    private static readonly string BadNetworkIdMessage =
+        $"The app did not save that network ID. An ID has {NetworkIdRule.Length} "
+        + "characters, and each character is 0-9 or a-f. ZeroTier Central at "
+        + "https://my.zerotier.com shows the ID of your network.";
+
+    /// <summary>
+    /// The message after a saved ID. The checks read the ID again on every
+    /// run, so Check again starts the lobby and the player does not restart
+    /// the app.
+    /// </summary>
+    private const string SavedNetworkIdMessage =
+        "The app saved the network ID. Choose Check again to start the lobby.";
+
     private static readonly string[] NoSteps = Array.Empty<string>();
+
+    /// <summary>
+    /// What the player announced. The launch button reads this value for its
+    /// label and for its gate, because the window must not offer to start MM2
+    /// before the player hosts a race or joins one.
+    /// </summary>
+    private enum LaunchRole
+    {
+        /// <summary>The player pressed neither Host nor Join.</summary>
+        None,
+
+        /// <summary>The player hosts the race.</summary>
+        Host,
+
+        /// <summary>The player joins the race of another player.</summary>
+        Join,
+    }
 
     private readonly ILobbyEnvironment _environment;
     private readonly IWindowHost _host;
@@ -33,16 +95,21 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private bool _disposed;
 
     private string _displayName = string.Empty;
+    private string _networkId = string.Empty;
+    private string _networkIdMessage = string.Empty;
     private string _hostTitle = NoHostTitle;
     private string _hostAddress = string.Empty;
     private string _hostButtonText = HostLabel;
+    private string _startGameButtonText = StartGameLabel;
     private string _statusMessage = string.Empty;
     private string _fixMessage = string.Empty;
     private string _faultMessage = string.Empty;
     private bool _setupExpanded = true;
     private bool _canHost;
     private bool _canJoin;
+    private bool _canStartGame;
     private bool _busy;
+    private LaunchRole _role = LaunchRole.None;
 
     public LobbyViewModel(ILobbyEnvironment environment, IWindowHost host)
     {
@@ -54,6 +121,11 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         // rejects such a name, so the app must shorten it before the first
         // announcement.
         SetTheName(environment.Config.DisplayName);
+
+        // The box shows the ID that the file holds, even a bad one. The
+        // ZeroTier check then reports the fault, and the player sees the text
+        // that caused it.
+        _networkId = environment.Config.ZeroTierNetworkId;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -89,6 +161,39 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     /// because the app excludes itself from its own list.
     /// </summary>
     public int DisplayNameMaxLength => PeerTable.MaxPlayerNameLength;
+
+    /// <summary>
+    /// The ID of the ZeroTier network of the group. The setter writes a valid
+    /// ID to the one configuration object and saves the file. The ZeroTier
+    /// check and the lobby service read the ID from that object, so Check
+    /// again starts the lobby with the new ID.
+    /// </summary>
+    /// <remarks>
+    /// The window gives this box no MaxLength. A pasted ID can carry a space
+    /// at each end, and a limit of 16 would cut two characters off such a
+    /// paste. NetworkIdRule removes the spaces instead.
+    /// </remarks>
+    public string ZeroTierNetworkId
+    {
+        get => _networkId;
+        set => SetTheNetworkId(value);
+    }
+
+    /// <summary>
+    /// What the last write of the network ID did. The text names the rule
+    /// after a value that breaks it, and it names the Check again button after
+    /// a save.
+    /// </summary>
+    public string NetworkIdMessage
+    {
+        get => _networkIdMessage;
+        private set
+        {
+            if (Set(ref _networkIdMessage, value)) OnPropertyChanged(nameof(HasNetworkIdMessage));
+        }
+    }
+
+    public bool HasNetworkIdMessage => _networkIdMessage.Length > 0;
 
     /// <summary>
     /// True while the setup list is open. The setter is public because
@@ -136,6 +241,27 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         get => _canJoin;
         private set => Set(ref _canJoin, value);
+    }
+
+    /// <summary>
+    /// True while the window accepts the launch button. The player presses
+    /// Host or Join first, because the app shows the address of the race
+    /// before MM2 covers the screen.
+    /// </summary>
+    public bool CanStartGame
+    {
+        get => _canStartGame;
+        private set => Set(ref _canStartGame, value);
+    }
+
+    /// <summary>
+    /// The label of the launch button. The word depends on the role, because
+    /// one word would be untrue for one of the two players.
+    /// </summary>
+    public string StartGameButtonText
+    {
+        get => _startGameButtonText;
+        private set => Set(ref _startGameButtonText, value);
     }
 
     /// <summary>
@@ -278,10 +404,16 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     }
 
     /// <summary>
-    /// Starts or stops the host role. When this app takes the host role, it
-    /// also starts MM2.
+    /// Starts or stops the host role. This method also copies the address of
+    /// this app to the clipboard, so the host can paste that address to the
+    /// others.
     /// </summary>
-    public void Host()
+    /// <remarks>
+    /// This method does not start MM2. MM2 covers the whole screen, and the
+    /// host must read his address and give it to the others first. The launch
+    /// button starts MM2.
+    /// </remarks>
+    public async Task HostAsync()
     {
         var lobby = _lobby;
         if (lobby is null || _busy) return;
@@ -289,40 +421,84 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         if (lobby.IsHosting)
         {
             lobby.StopHosting();
+
+            // The race ended. A live launch button would start MM2 for a race
+            // that nobody hosts.
+            _role = LaunchRole.None;
             RefreshStatus();
             return;
         }
 
         lobby.StartHosting();
+
+        // This player is the host now. A Join that came first does not hold
+        // any more, so this line also takes that role away.
+        _role = LaunchRole.Host;
         RefreshStatus();
-        StartTheGame();
+
+        // MyAddress is null until a cycle reads the ZeroTier network. The app
+        // copies nothing in that state, and HostTitle tells the player to
+        // wait.
+        StatusMessage = lobby.MyAddress is { } address
+            ? await CopyTheAddressAsync(address)
+            : string.Empty;
     }
 
     /// <summary>
-    /// Copies the address of the host, then starts MM2. The player types the
-    /// address, because MM2 can refuse Ctrl+V.
+    /// Copies the address of the host. The player types that address into MM2,
+    /// because MM2 can refuse Ctrl+V.
     /// </summary>
+    /// <remarks>
+    /// This method does not start MM2, for the reason that HostAsync gives.
+    /// The launch button starts MM2.
+    /// </remarks>
     public async Task JoinAsync()
     {
         var address = _lobby?.CurrentHost?.Address?.ToString();
         if (address is null || _busy) return;
 
-        var note = string.Empty;
+        _role = LaunchRole.Join;
+        UpdateTheButtons();
 
+        StatusMessage = await CopyTheAddressAsync(address);
+    }
+
+    /// <summary>
+    /// Starts MM2. The player presses Host or Join first, reads the address
+    /// that the window shows, and gives that address to the others. Then this
+    /// method covers the screen with the game.
+    /// </summary>
+    public void StartGame()
+    {
+        // The same gate as Host and Join. This method starts a process, so a
+        // click that arrives after the state changed must start nothing.
+        if (_role == LaunchRole.None || !_preflightPassed || _lobby is null || _busy) return;
+
+        // The button stays on after this launch, and this method does not
+        // refuse a second press. MM2 is flaky and it sometimes stops, so the
+        // player must be able to start it again. A guard here would cost him
+        // his place in the lobby.
+        StartTheGame();
+    }
+
+    /// <summary>
+    /// Puts the address on the clipboard. It returns an empty text after a
+    /// copy that works, and a note after a copy that fails.
+    /// </summary>
+    private async Task<string> CopyTheAddressAsync(string address)
+    {
         try
         {
             await _host.CopyTextAsync(address);
+            return string.Empty;
         }
         catch (Exception e)
         {
             // The clipboard is a convenience. The window also shows the
-            // address in a large font, so the player can read it and type it.
-            // The note goes in front of the message about the game, because
-            // the window holds one message and the game matters more.
-            note = $"The app cannot write to the clipboard ({e.Message}). ";
+            // address in a large font, so the note sends the player to it.
+            return $"The app cannot write to the clipboard ({e.Message}). "
+                + "Read the address above.";
         }
-
-        StartTheGame(note);
     }
 
     /// <summary>
@@ -363,6 +539,16 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
             HostTitle = NoHostTitle;
             HostAddress = string.Empty;
             ShowTheSteps(NoSteps);
+
+            // The host of this player stopped the race. That address now
+            // belongs to a race that ended, so the launch button goes away.
+            // A button that disappears tells the player nothing, so the
+            // message gives him the reason.
+            if (_role == LaunchRole.Join)
+            {
+                _role = LaunchRole.None;
+                StatusMessage = HostStoppedMessage;
+            }
         }
 
         FaultMessage = lobby?.LastCycleFault is { } fault
@@ -462,6 +648,11 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         _lobby = null;
         PeerRows.Clear();
 
+        // A new service hosts nothing, and it knows no host. So the role of
+        // the player goes with the old service, and the launch button waits
+        // for Host or Join again.
+        _role = LaunchRole.None;
+
         if (lobby is null) return;
 
         lobby.PeersChanged -= OnPeersChanged;
@@ -536,21 +727,25 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         CanHost = ready;
         CanJoin = ready && !lobby!.IsHosting && lobby.CurrentHost?.Address is not null;
         HostButtonText = lobby?.IsHosting == true ? StopLabel : HostLabel;
+
+        // The launch button carries the gate of Host and Join, and it also
+        // waits for one of those two presses.
+        CanStartGame = ready && _role != LaunchRole.None;
+        StartGameButtonText = _role == LaunchRole.Host ? StartRaceLabel : StartGameLabel;
     }
 
-    /// <param name="note">Text that goes in front of the message. It can be empty.</param>
-    private void StartTheGame(string note = "")
+    private void StartTheGame()
     {
         var path = _environment.Config.GamePath;
 
         try
         {
             _environment.LaunchGame(path);
-            StatusMessage = note + "MM2 started. Follow the steps above.";
+            StatusMessage = "MM2 started. Follow the steps above.";
         }
         catch (Exception e)
         {
-            StatusMessage = note + $"MM2 did not start: {e.Message}";
+            StatusMessage = $"MM2 did not start: {e.Message}";
         }
     }
 
@@ -561,6 +756,15 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private bool SetTheName(string? value)
     {
         var name = value ?? string.Empty;
+
+        // A blank name makes the player invisible. PeerTable rejects an
+        // announcement that carries no name, so every friend drops the
+        // datagram, and the player cannot see that, because the app excludes
+        // itself from its own list. ConfigStore.Load puts the computer name in
+        // the place of a blank name at the start, and this method does the same
+        // at run time. So a player who clears the box, and a player who closes
+        // the window with an empty box, both keep a name.
+        if (string.IsNullOrWhiteSpace(name)) name = Environment.MachineName;
 
         if (name.Length > PeerTable.MaxPlayerNameLength)
         {
@@ -573,6 +777,85 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         _displayName = name;
         return true;
+    }
+
+    /// <summary>
+    /// Writes a network ID to the one configuration object. A value that
+    /// breaks the rule of NetworkIdRule does not reach that object, and the
+    /// message then gives the player the rule.
+    /// </summary>
+    private void SetTheNetworkId(string? value)
+    {
+        var typed = value ?? string.Empty;
+
+        if (!NetworkIdRule.TryRead(typed, out var id))
+        {
+            // The box keeps the text of the player. A box that empties itself
+            // takes away the value that the player must correct.
+            ShowTheNetworkId(typed);
+            NetworkIdMessage = BadNetworkIdMessage;
+            return;
+        }
+
+        var isNew = id != _environment.Config.ZeroTierNetworkId;
+
+        // The box shows the trimmed ID in lower case, which is the form that
+        // the file holds.
+        ShowTheNetworkId(id);
+
+        if (!isNew)
+        {
+            // The binding writes on every loss of the focus. The same ID must
+            // not write the file again, and the old message must go, because
+            // it belongs to an earlier write.
+            NetworkIdMessage = string.Empty;
+            return;
+        }
+
+        _environment.Config.ZeroTierNetworkId = id;
+        SaveTheConfiguration();
+        NetworkIdMessage = SavedNetworkIdMessage;
+        MarkTheChecksStale();
+    }
+
+    /// <summary>
+    /// Takes the result off every check row, and takes Host and Join away.
+    /// The checks ran against the old network ID, and the ZeroTier check reads
+    /// that ID. So a row that kept its Pass would assert something that no
+    /// longer holds.
+    /// </summary>
+    /// <remarks>
+    /// The window does not offer an action whose condition it cannot verify.
+    /// The checks gate the two buttons, and a live Host button promises a race
+    /// that the app cannot give: a service that cannot find the new network
+    /// sends no announcement, and no friend sees the race. A stale row above
+    /// two live buttons tells the player the same lie with the buttons.
+    ///
+    /// This method also opens the setup panel. The Check again button sits
+    /// inside that panel, and the panel closes itself once every check passes.
+    /// A closed panel would hide the button that the message names.
+    /// </remarks>
+    private void MarkTheChecksStale()
+    {
+        _preflightPassed = false;
+        UpdateTheButtons();
+
+        if (CheckRows.Count == 0) return;
+
+        var names = CheckRows.Select(row => row.Name).ToList();
+
+        CheckRows.Clear();
+        foreach (var name in names) CheckRows.Add(CheckRow.Stale(name));
+
+        SetupExpanded = true;
+    }
+
+    private void ShowTheNetworkId(string value)
+    {
+        if (value == _networkId) return;
+
+        _networkId = value;
+        OnPropertyChanged(nameof(ZeroTierNetworkId));
     }
 
     private void SaveTheConfiguration()

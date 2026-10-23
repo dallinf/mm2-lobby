@@ -12,9 +12,12 @@ hold and which ones fail.
 
 ## How to run it
 
+Warning: an administrator window gives a false answer to the most important
+question in this report. Read "Run it as a standard user" below before step 3.
+
 1. Install the .NET 10 SDK from <https://dotnet.microsoft.com/download>.
 2. Copy this repository to the Windows computer.
-3. Open PowerShell. **Do not open it as an administrator.**
+3. Open a normal PowerShell window.
 4. Go to the folder of the repository.
 5. Run this one command:
 
@@ -29,7 +32,7 @@ your computer.
 The script prints its work and writes the report to your Desktop as
 `mm2-lobby-report.txt`. Open that file, copy everything, and paste it back.
 
-## Warning: run it as a standard user
+## Run it as a standard user
 
 Do not run this script as an administrator. The most serious open question is
 whether `zerotier-cli` answers a user who holds no administrator rights. The
@@ -59,6 +62,18 @@ The script cannot answer these alone:
 
 Add your answers under the report before you paste it back. To skip the two
 steps that need you, add `-SkipInteractive` to the command.
+
+## Warning: Windows blocks the program the first time
+
+Nobody has signed this program, and it is 97 MB. Windows SmartScreen therefore
+shows a blue box that says "Windows protected your PC", and it hides the Run
+button. Take these steps:
+
+1. Choose **More info**.
+2. Choose **Run anyway**.
+
+Tell your friends this before you send them the program. Without the warning,
+a friend reads the blue box as a virus report and stops.
 
 ## Two tests this script cannot run
 

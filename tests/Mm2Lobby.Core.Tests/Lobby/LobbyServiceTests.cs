@@ -159,6 +159,58 @@ public class LobbyServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AnnounceAsync_reads_the_display_name_one_time()
+    {
+        // The window owns the one AppConfig, and it writes the name while the
+        // pump runs. With two reads, a name of 3 characters can replace a name
+        // of 40 between the two, and the truncation then throws. The cost is
+        // one skipped cycle and a confusing fault line.
+        //
+        // This test runs the real race: one thread writes the name while
+        // another thread runs cycles. The two reads then take two values, and
+        // the truncation throws inside the loop below. With the two reads in
+        // place, 20000 cycles threw on every one of 10 runs, and each run
+        // threw within 40 ms. With the one read, the loop never throws.
+        var tooLong = new string('a', PeerTable.MaxPlayerNameLength + 8);
+        var config = new AppConfig
+        {
+            DisplayName = "bob",
+            ZeroTierNetworkId = "0123456789abcdef",
+        };
+
+        var table = new PeerTable(LobbyService.PeerExpiry, () => _now);
+        await using var service = new LobbyService(
+            _zeroTier, _transport, table, new PeerDirectory(_zeroTier, table),
+            Store, config, "1.0.0", () => _now);
+
+        await service.StartAsync(default);
+
+        using var stop = new CancellationTokenSource();
+        var writer = Task.Run(
+            () =>
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    config.DisplayName = tooLong;
+                    config.DisplayName = "bob";
+                }
+            });
+
+        try
+        {
+            for (var cycle = 0; cycle < 20000; cycle++)
+            {
+                await service.RunCycleAsync(default);
+            }
+        }
+        finally
+        {
+            stop.Cancel();
+            await writer;
+        }
+    }
+
+    [Fact]
     public async Task StartHosting_puts_the_host_flag_and_the_start_time_on_the_announcement()
     {
         await using var service = Build();

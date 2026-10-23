@@ -6,6 +6,7 @@ using Mm2Lobby.Core.Peers;
 using Mm2Lobby.Core.Preflight;
 using Mm2Lobby.Core.Tests.Fakes;
 using Mm2Lobby.Core.ZeroTier;
+using Mm2Lobby.Windows.Checks;
 
 namespace Mm2Lobby.Core.Tests.App;
 
@@ -241,7 +242,7 @@ public class LobbyViewModelTests : IDisposable
         await using var model = Build();
         await model.StartAsync();
 
-        model.Host();
+        await model.HostAsync();
 
         Assert.Equal(string.Empty, model.HostAddress);
         Assert.DoesNotContain("Give the address", model.HostTitle);
@@ -552,7 +553,7 @@ public class LobbyViewModelTests : IDisposable
         await using var model = Build();
         await model.StartAsync();
 
-        model.Host();
+        await model.HostAsync();
 
         Assert.Equal("10.147.17.42", model.HostAddress);
         Assert.Contains("You host", model.HostTitle);
@@ -567,7 +568,7 @@ public class LobbyViewModelTests : IDisposable
         await using var model = Build();
         await model.StartAsync();
 
-        model.Host();
+        await model.HostAsync();
 
         Assert.Equal(JoinInstructions.ForHost(), model.JoinSteps);
     }
@@ -660,7 +661,7 @@ public class LobbyViewModelTests : IDisposable
         DeliverPeer(hosting: true);
         await _environment.Lobbies[0].RunCycleAsync(default);
 
-        model.Host();
+        await model.HostAsync();
 
         Assert.False(model.CanJoin);
     }
@@ -675,44 +676,29 @@ public class LobbyViewModelTests : IDisposable
 
         Assert.Equal("Host a race", model.HostButtonText);
 
-        model.Host();
+        await model.HostAsync();
         Assert.Equal("Stop the race", model.HostButtonText);
 
-        model.Host();
+        await model.HostAsync();
         Assert.Equal("Host a race", model.HostButtonText);
     }
 
     [Fact]
-    public async Task Host_starts_the_game_at_the_path_of_the_one_configuration()
-    {
-        AddCheck("ZeroTier");
-        _environment.Config.GamePath = @"D:\MM2\midtown2.exe";
-
-        await using var model = Build();
-        await model.StartAsync();
-
-        model.Host();
-
-        Assert.Equal(@"D:\MM2\midtown2.exe", Assert.Single(_environment.LaunchedPaths));
-    }
-
-    [Fact]
-    public async Task A_second_press_stops_the_race_and_starts_no_game()
+    public async Task A_second_press_stops_the_race()
     {
         AddCheck("ZeroTier");
 
         await using var model = Build();
         await model.StartAsync();
 
-        model.Host();
-        model.Host();
+        await model.HostAsync();
+        await model.HostAsync();
 
         Assert.False(_environment.Lobbies[0].IsHosting);
-        Assert.Single(_environment.LaunchedPaths);
     }
 
     [Fact]
-    public async Task Join_copies_the_address_and_starts_the_game()
+    public async Task Join_copies_the_address()
     {
         AddCheck("ZeroTier");
 
@@ -725,11 +711,10 @@ public class LobbyViewModelTests : IDisposable
         await model.JoinAsync();
 
         Assert.Equal("10.147.17.50", Assert.Single(_host.CopiedText));
-        Assert.Single(_environment.LaunchedPaths);
     }
 
     [Fact]
-    public async Task Join_starts_the_game_after_a_clipboard_that_fails()
+    public async Task Join_reports_a_clipboard_that_fails()
     {
         AddCheck("ZeroTier");
         _host.CopyFault = new InvalidOperationException("no clipboard");
@@ -742,11 +727,10 @@ public class LobbyViewModelTests : IDisposable
 
         await model.JoinAsync();
 
-        // The window holds one message. The player must still learn that MM2
-        // started, so the note about the clipboard goes in front of it.
-        Assert.Single(_environment.LaunchedPaths);
+        // The clipboard is a convenience. The window also shows the address in
+        // a large font, so the message sends the player to that address.
         Assert.Contains("no clipboard", model.StatusMessage);
-        Assert.Contains("MM2 started", model.StatusMessage);
+        Assert.Contains("Read the address above", model.StatusMessage);
     }
 
     [Fact]
@@ -758,9 +742,266 @@ public class LobbyViewModelTests : IDisposable
         await using var model = Build();
         await model.StartAsync();
 
-        model.Host();
+        await model.HostAsync();
+        model.StartGame();
 
         Assert.Contains("midtown2.exe is missing", model.StatusMessage);
+    }
+
+    // --- The launch button -------------------------------------------------
+
+    [Fact]
+    public async Task Host_announces_the_race_and_starts_no_game()
+    {
+        // MM2 covers the screen. A game that starts here hides the address
+        // that the host must give to the others.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.True(_environment.Lobbies[0].IsHosting);
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task Host_copies_the_address_of_this_app()
+    {
+        // The host pastes the address to the others before the game starts.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.Equal("10.147.17.42", Assert.Single(_host.CopiedText));
+    }
+
+    [Fact]
+    public async Task Host_reports_a_clipboard_that_fails_and_keeps_the_race()
+    {
+        AddCheck("ZeroTier");
+        _host.CopyFault = new InvalidOperationException("no clipboard");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.Contains("no clipboard", model.StatusMessage);
+        Assert.Contains("Read the address above", model.StatusMessage);
+
+        // The clipboard is a convenience. The race goes on without it.
+        Assert.True(_environment.Lobbies[0].IsHosting);
+        Assert.True(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task Join_starts_no_game()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task The_launch_button_waits_for_Host_or_Join()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.True(model.CanHost);
+        Assert.False(model.CanStartGame);
+
+        await model.HostAsync();
+
+        Assert.True(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task A_press_before_Host_or_Join_starts_no_game()
+    {
+        // This method starts a process. It carries the gate of Host and Join,
+        // so a click that arrives late starts nothing.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.StartGame();
+
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task The_launch_button_names_the_race_for_the_host()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.Equal("Start the race", model.StartGameButtonText);
+    }
+
+    [Fact]
+    public async Task The_launch_button_names_the_game_for_a_player_who_joins()
+    {
+        // A player who joins does not start a race. Another player does.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+
+        Assert.Equal("Start the game", model.StartGameButtonText);
+    }
+
+    [Fact]
+    public async Task The_launch_button_starts_the_game_at_the_path_of_the_one_configuration()
+    {
+        AddCheck("ZeroTier");
+        _environment.Config.GamePath = @"D:\MM2\midtown2.exe";
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Equal(@"D:\MM2\midtown2.exe", Assert.Single(_environment.LaunchedPaths));
+        Assert.Contains("MM2 started", model.StatusMessage);
+    }
+
+    [Fact]
+    public async Task A_second_press_of_Host_takes_the_launch_button_away()
+    {
+        // The second press ends the race. A live button would then start MM2
+        // for a race that nobody hosts.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        await model.HostAsync();
+
+        Assert.False(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task Host_after_Join_makes_this_player_the_host()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+        await model.HostAsync();
+
+        Assert.True(model.CanStartGame);
+        Assert.Equal("Start the race", model.StartGameButtonText);
+    }
+
+    [Fact]
+    public async Task A_host_that_stops_takes_the_launch_button_from_a_player_who_joined()
+    {
+        // The address of that host belongs to a race that ended. A live button
+        // promises a game that no host answers.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+
+        Assert.True(model.CanStartGame);
+
+        DeliverPeer(hosting: false);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.False(model.CanStartGame);
+        Assert.Contains("The host stopped the race", model.StatusMessage);
+    }
+
+    [Fact]
+    public async Task The_launch_button_stays_on_after_a_launch()
+    {
+        // MM2 is flaky. The host must be able to start it again, and he must
+        // keep his place in the lobby.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+        model.StartGame();
+
+        Assert.Equal(2, _environment.LaunchedPaths.Count);
+        Assert.True(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task Check_again_takes_the_launch_button_away()
+    {
+        // Check again builds a new lobby service, and a new service hosts
+        // nothing. The player presses Host again.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        await model.CheckAgainAsync();
+
+        Assert.True(model.CanHost);
+        Assert.False(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task A_new_network_ID_takes_the_launch_button_away()
+    {
+        // The checks ran against the old ID, and those checks gate every
+        // button that starts work.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.True(model.CanStartGame);
+
+        model.ZeroTierNetworkId = "8056c2e21c000001";
+
+        Assert.False(model.CanStartGame);
     }
 
     // --- The name editor ---------------------------------------------------
@@ -849,6 +1090,261 @@ public class LobbyViewModelTests : IDisposable
         model.DisplayName = "dallin";
 
         Assert.Contains("the file is read-only", model.StatusMessage);
+    }
+
+    /// <summary>
+    /// The name that the app announces for the computer name. PeerTable also
+    /// limits the length, so a long computer name arrives short.
+    /// </summary>
+    private static string ComputerName() => string.Concat(
+        Environment.MachineName.Take(PeerTable.MaxPlayerNameLength));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task The_window_puts_the_computer_name_in_the_place_of_a_blank_name(string blank)
+    {
+        // PeerTable rejects an announcement that carries no name. Every friend
+        // then stops showing this player, and the player cannot see that,
+        // because the app excludes itself from its own list.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        model.DisplayName = blank;
+
+        Assert.Equal(ComputerName(), model.DisplayName);
+        Assert.Equal(ComputerName(), _environment.Config.DisplayName);
+    }
+
+    [Fact]
+    public async Task A_player_who_clears_the_name_box_stays_visible_to_every_friend()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.DisplayName = string.Empty;
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        // Every friend runs this test on the datagram. A datagram that carries
+        // no name does not reach their list. This assertion comes first,
+        // because it is the one that the defect broke.
+        var payload = _environment.Transports[0].Sent[^1].Payload;
+        var address = IPAddress.Parse("10.147.17.42");
+        var table = new PeerTable(LobbyService.PeerExpiry, () => _environment.Now);
+        Assert.True(table.Accept(payload, address, IPv4Math.Subnet(address, 24)));
+
+        var announcement = Announcement.TryParse(payload);
+        Assert.NotNull(announcement);
+        Assert.Equal(ComputerName(), announcement.Player);
+    }
+
+    // --- The network ID editor ---------------------------------------------
+
+    [Fact]
+    public async Task The_window_shows_the_network_ID_of_the_configuration()
+    {
+        AddCheck("ZeroTier");
+        _environment.Config.ZeroTierNetworkId = "8056c2e21c000001";
+
+        await using var model = Build();
+
+        Assert.Equal("8056c2e21c000001", model.ZeroTierNetworkId);
+    }
+
+    [Fact]
+    public async Task The_ID_editor_writes_the_ID_to_the_one_configuration()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        model.ZeroTierNetworkId = "   8056C2E21C000001   ";
+
+        Assert.Equal("8056c2e21c000001", _environment.Config.ZeroTierNetworkId);
+        Assert.Equal("8056c2e21c000001", model.ZeroTierNetworkId);
+        Assert.Equal(1, _environment.SaveCount);
+        Assert.Equal("8056c2e21c000001", _environment.ConfigStore.Load().ZeroTierNetworkId);
+    }
+
+    [Fact]
+    public async Task The_window_names_Check_again_after_it_saves_an_ID()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        model.ZeroTierNetworkId = "8056c2e21c000001";
+
+        Assert.True(model.HasNetworkIdMessage);
+        Assert.Contains("Check again", model.NetworkIdMessage);
+    }
+
+    [Fact]
+    public async Task A_bad_ID_does_not_reach_the_configuration()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        model.ZeroTierNetworkId = "my network";
+
+        // The configuration keeps the ID that it had, and the box keeps the
+        // text of the player, so the player can correct that text.
+        Assert.Equal("0123456789abcdef", _environment.Config.ZeroTierNetworkId);
+        Assert.Equal(0, _environment.SaveCount);
+        Assert.Equal("my network", model.ZeroTierNetworkId);
+    }
+
+    [Fact]
+    public async Task The_advice_for_a_bad_ID_names_the_rule_and_ZeroTier_Central()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        model.ZeroTierNetworkId = "abc";
+
+        Assert.True(model.HasNetworkIdMessage);
+        Assert.Contains("16 characters", model.NetworkIdMessage);
+        Assert.Contains("https://my.zerotier.com", model.NetworkIdMessage);
+    }
+
+    [Fact]
+    public async Task The_window_saves_nothing_when_the_ID_does_not_change()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+
+        // The binding writes on every loss of the focus. The same ID must not
+        // write the file again.
+        model.ZeroTierNetworkId = "0123456789ABCDEF";
+
+        Assert.Equal(0, _environment.SaveCount);
+        Assert.Equal("0123456789abcdef", model.ZeroTierNetworkId);
+        Assert.False(model.HasNetworkIdMessage);
+    }
+
+    [Fact]
+    public async Task A_new_network_ID_marks_every_check_row_stale()
+    {
+        // The checks ran against the old ID. A row that still says OK asserts
+        // something that no longer holds, and the ZeroTier row is the one that
+        // the new ID can turn into a problem.
+        AddCheck("ZeroTier");
+        AddCheck("Firewall");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.All(model.CheckRows, row => Assert.Equal("OK", row.Mark));
+        Assert.False(model.SetupExpanded);
+
+        model.ZeroTierNetworkId = "8056c2e21c000001";
+
+        Assert.Equal(
+            new[] { "ZeroTier", "Firewall" },
+            model.CheckRows.Select(row => row.Name));
+
+        Assert.All(model.CheckRows, row =>
+        {
+            Assert.Equal("Unknown", row.Mark);
+            Assert.Contains("Check again", row.Message);
+            Assert.False(row.ShowAction);
+        });
+
+        // The Check again button sits inside the setup panel. A closed panel
+        // hides the button that the message names.
+        Assert.True(model.SetupExpanded);
+    }
+
+    [Fact]
+    public async Task A_new_network_ID_takes_Host_and_Join_away()
+    {
+        // The ZeroTier check gates the two buttons, and that check reads the
+        // network ID. A new ID therefore makes the gate unknown. A live Host
+        // button would promise a race that the app cannot give: a service that
+        // cannot find the new network sends no announcement, and no friend
+        // sees the race.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.True(model.CanHost);
+        Assert.True(model.CanJoin);
+
+        model.ZeroTierNetworkId = "8056c2e21c000001";
+
+        Assert.False(model.CanHost);
+        Assert.False(model.CanJoin);
+
+        // Check again is the way back.
+        await model.CheckAgainAsync();
+
+        Assert.True(model.CanHost);
+    }
+
+    [Fact]
+    public async Task The_same_network_ID_leaves_the_check_rows_alone()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.ZeroTierNetworkId = "0123456789ABCDEF";
+
+        Assert.Equal("OK", model.CheckRows[0].Mark);
+        Assert.False(model.SetupExpanded);
+    }
+
+    [Fact]
+    public async Task A_bad_network_ID_leaves_the_check_rows_alone()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.ZeroTierNetworkId = "my network";
+
+        // The configuration keeps the old ID, so every result still holds.
+        Assert.Equal("OK", model.CheckRows[0].Mark);
+    }
+
+    [Fact]
+    public async Task A_player_who_types_the_ID_reaches_the_lobby_without_a_restart()
+    {
+        // A fresh install holds no network ID. The ZeroTier check then fails,
+        // and StartTheLobbyAsync returns before it builds a lobby. This test
+        // walks the way out of that state: the player types the ID, and then
+        // chooses Check again.
+        var zeroTier = new FakeZeroTierClient();
+        _environment.ZeroTier = zeroTier;
+        _environment.Config.ZeroTierNetworkId = string.Empty;
+        _environment.Checks.Add(
+            new CheckEntry(new ZeroTierCheck(
+                zeroTier,
+                _environment.Config,
+                new ZeroTierFaultReader(
+                    new FakeProcessRunner(),
+                    new ZeroTierCommand("zerotier-cli", Array.Empty<string>())),
+                new ZeroTierTokenGrant(
+                    new FakeElevatedProcessRunner(), () => null, () => "shared"))));
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Equal(0, _environment.CreateLobbyCount);
+        Assert.False(model.CanHost);
+
+        model.ZeroTierNetworkId = " 0123456789ABCDEF ";
+        await model.CheckAgainAsync();
+
+        Assert.Equal(1, _environment.CreateLobbyCount);
+        Assert.True(model.CanHost);
     }
 
     // --- The fault of the last cycle ---------------------------------------

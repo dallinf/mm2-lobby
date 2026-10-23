@@ -19,10 +19,17 @@ public sealed class ZeroTierClient : IZeroTierClient
         new ReadOnlyDictionary<string, LinkQuality>(
             new Dictionary<string, LinkQuality>(StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// The plain name of the command. macOS and Linux find this name. Windows
+    /// does not, so ZeroTierCliLocator gives this class the path of the
+    /// command file instead.
+    /// </summary>
+    public const string PlainCommand = "zerotier-cli";
+
     private readonly IProcessRunner _runner;
     private readonly string _executable;
 
-    public ZeroTierClient(IProcessRunner runner, string executable = "zerotier-cli")
+    public ZeroTierClient(IProcessRunner runner, string executable = PlainCommand)
     {
         _runner = runner;
         _executable = executable;
@@ -30,7 +37,7 @@ public sealed class ZeroTierClient : IZeroTierClient
 
     public async Task<ZeroTierStatus?> GetStatusAsync(CancellationToken ct)
     {
-        using var json = await ReadJsonAsync("-j info", JsonValueKind.Object, ct);
+        using var json = await ReadJsonAsync(ZeroTierArguments.Info, JsonValueKind.Object, ct);
         if (json is null) return null;
 
         var root = json.RootElement;
@@ -45,7 +52,7 @@ public sealed class ZeroTierClient : IZeroTierClient
 
     public async Task<ZeroTierNetwork?> GetNetworkAsync(string networkId, CancellationToken ct)
     {
-        using var json = await ReadJsonAsync("-j listnetworks", JsonValueKind.Array, ct);
+        using var json = await ReadJsonAsync(ZeroTierArguments.ListNetworks, JsonValueKind.Array, ct);
         if (json is null) return null;
 
         foreach (var entry in json.RootElement.EnumerateArray())
@@ -67,7 +74,7 @@ public sealed class ZeroTierClient : IZeroTierClient
     public async Task<IReadOnlyDictionary<string, LinkQuality>> GetLinkQualityAsync(
         CancellationToken ct)
     {
-        using var json = await ReadJsonAsync("-j listpeers", JsonValueKind.Array, ct);
+        using var json = await ReadJsonAsync(ZeroTierArguments.ListPeers, JsonValueKind.Array, ct);
         if (json is null) return NoPeers;
 
         var map = new Dictionary<string, LinkQuality>(StringComparer.OrdinalIgnoreCase);
@@ -96,9 +103,10 @@ public sealed class ZeroTierClient : IZeroTierClient
     /// document that it receives.
     /// </summary>
     private async Task<JsonDocument?> ReadJsonAsync(
-        string arguments, JsonValueKind expectedKind, CancellationToken ct)
+        string command, JsonValueKind expectedKind, CancellationToken ct)
     {
-        var result = await _runner.RunAsync(_executable, arguments, ct);
+        var result = await _runner.RunAsync(
+            _executable, ZeroTierArguments.For(command), ct);
         if (!result.Succeeded || string.IsNullOrWhiteSpace(result.StandardOutput)) return null;
 
         JsonDocument document;

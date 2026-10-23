@@ -428,7 +428,23 @@ rejects such an announcement, so the player would become invisible to every
 friend while their own list looked normal, because the app excludes itself from
 its own list. The window limits the text box, and `LobbyService` truncates
 before it announces.
+An empty display name is the same failure: `PeerTable` rejects an announcement
+that carries no name. `ConfigStore.Load` puts the computer name in the place of
+a blank name at the start, and the window does the same at run time. So a
+player who clears the box keeps a name.
 A missing or malformed file loads the defaults rather than failing.
+
+**The window also owns the network ID.** Revision 2 named
+`zeroTierNetworkId` in the file and gave it no writer, so a fresh install had
+no way to reach a lobby: the ZeroTier check failed, the app blocked Host and
+Join, and the only advice named a settings screen that does not exist. The
+window therefore holds a second box for the ID. The box takes 16 hexadecimal
+characters, it removes the spaces at the ends of a pasted ID, and it accepts
+both letter cases. A value that breaks the rule does not reach the
+configuration, and the advice then names the rule and ZeroTier Central at
+`https://my.zerotier.com`. The checks read the ID from the one `AppConfig` on
+every run, so **Check again** starts the lobby with the new ID and the player
+does not restart the app.
 
 ## 6. Data flow
 
