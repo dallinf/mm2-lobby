@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Exe, not WinExe. The owner reads the console output of the probe, so
+         the program needs the console that Exe gives it. The app project uses
+         WinExe for the opposite reason. -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+
+    <!-- The probe reads a COM vtable through a function pointer, and a
+         function pointer needs unsafe code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- These two settings match src/Mm2Lobby.App. The publish command then
+         writes one exe that the owner can copy to the game computer:
+         dotnet publish tools/Mm2Lobby.LobbyProbe -c Release -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <!-- The runtime belongs to a publish only, the same as in the app project.
+       The condition on RuntimeIdentifier lets the owner publish a 32 bit build
+       without an edit to this file, because DirectPlay may only have a 32 bit
+       dplayx.dll on his computer:
+       dotnet publish tools/Mm2Lobby.LobbyProbe -c Release -r win-x86 -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
+</Project>
