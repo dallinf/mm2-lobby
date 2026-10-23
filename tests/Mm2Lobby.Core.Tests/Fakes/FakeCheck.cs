@@ -13,6 +13,9 @@ public sealed class FakeCheck : ICheck
 
     public string Name { get; }
 
+    /// <summary>A test sets this to false to make the check advisory.</summary>
+    public bool Blocks { get; set; } = true;
+
     public CheckStatus Status { get; set; }
 
     public string Message { get; set; } = "The check passes.";

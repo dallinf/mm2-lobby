@@ -76,9 +76,19 @@ internal sealed record LobbyApplicationEntry(
 }
 
 /// <summary>What the reader found, and the fault that it found.</summary>
+/// <param name="Entry">The registration, or null when the reader found a fault.</param>
+/// <param name="Fault">The fault that the reader found.</param>
+/// <param name="KeyName">
+/// The name of the key that holds the word midtown, or null when no key holds
+/// it. The reader reports this name beside a fault that gives no entry, so the
+/// setup check can mend the key that the player already has. A fix that wrote
+/// a second key with that word would leave the reader a choice between two
+/// keys.
+/// </param>
 internal sealed record LobbyRegistration(
     LobbyApplicationEntry? Entry,
-    LobbyRegistrationFault Fault);
+    LobbyRegistrationFault Fault,
+    string? KeyName = null);
 
 /// <summary>
 /// This class reads the registration of MM2 with the DirectPlay lobby. The
@@ -126,19 +136,19 @@ internal static class LobbyApplicationReader
 
         if (!Guid.TryParse(Read(key, GuidValue), out var applicationGuid))
         {
-            return new LobbyRegistration(null, LobbyRegistrationFault.NoGuid);
+            return new LobbyRegistration(null, LobbyRegistrationFault.NoGuid, key.Name);
         }
 
         var folder = Read(key, PathValue);
         if (string.IsNullOrWhiteSpace(folder))
         {
-            return new LobbyRegistration(null, LobbyRegistrationFault.NoPath);
+            return new LobbyRegistration(null, LobbyRegistrationFault.NoPath, key.Name);
         }
 
         var file = Read(key, FileValue);
         if (string.IsNullOrWhiteSpace(file))
         {
-            return new LobbyRegistration(null, LobbyRegistrationFault.NoFile);
+            return new LobbyRegistration(null, LobbyRegistrationFault.NoFile, key.Name);
         }
 
         var entry = new LobbyApplicationEntry(
@@ -151,16 +161,27 @@ internal static class LobbyApplicationReader
 
         if (!file.StartsWith('\\'))
         {
-            return new LobbyRegistration(entry, LobbyRegistrationFault.FileWithoutLeadingBackslash);
+            return new LobbyRegistration(
+                entry, LobbyRegistrationFault.FileWithoutLeadingBackslash, key.Name);
         }
 
         if (key.Values.ContainsKey(LauncherValue))
         {
-            return new LobbyRegistration(entry, LobbyRegistrationFault.LauncherValuePresent);
+            return new LobbyRegistration(
+                entry, LobbyRegistrationFault.LauncherValuePresent, key.Name);
         }
 
-        return new LobbyRegistration(entry, LobbyRegistrationFault.None);
+        return new LobbyRegistration(entry, LobbyRegistrationFault.None, key.Name);
     }
+
+    /// <summary>
+    /// This method reads the registration of this computer. It gives NoKey on
+    /// a computer that does not run Windows, so the launcher and the setup
+    /// check share one route to the registry.
+    /// </summary>
+    public static LobbyRegistration ReadFromThisComputer() => OperatingSystem.IsWindows()
+        ? ReadFromRegistry()
+        : new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
 
     /// <summary>
     /// This method reads the real registry. No test covers it, because a test

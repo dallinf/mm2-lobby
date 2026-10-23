@@ -120,6 +120,13 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
         new CheckEntry(
             new FirewallCheck(_plainRunner, _elevatedRunner, Config),
             FirewallRepairHint),
+
+        // These two checks give advice. The app raced before they existed,
+        // and PreflightRunner.AllPassed therefore passes over them. Each one
+        // buys the one click start and nothing else. Both read the game path,
+        // so both stand after the Midtown Madness 2 check that writes it.
+        new CheckEntry(new LobbyRegistrationCheck(Config, _elevatedRunner)),
+        new CheckEntry(new CompatibilityModeCheck(Config)),
     };
 
     public LobbyService CreateLobby()

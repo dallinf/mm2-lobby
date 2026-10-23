@@ -34,6 +34,29 @@ public class LobbyApplicationReaderTests
 
         Assert.Equal(LobbyRegistrationFault.NoKey, registration.Fault);
         Assert.Null(registration.Entry);
+        Assert.Null(registration.KeyName);
+    }
+
+    [Fact]
+    public void The_reader_reports_the_key_name_of_a_key_that_holds_a_fault()
+    {
+        // The fix writes the values of the key that the player already has.
+        // Without this name the fix would write a second key that also holds
+        // the word midtown, and the reader would then choose between two
+        // keys.
+        var registration = LobbyApplicationReader.ReadFrom([Key("Midtown Madness 2", guid: null)]);
+
+        Assert.Equal(LobbyRegistrationFault.NoGuid, registration.Fault);
+        Assert.Null(registration.Entry);
+        Assert.Equal("Midtown Madness 2", registration.KeyName);
+    }
+
+    [Fact]
+    public void The_reader_reports_the_key_name_of_a_key_that_holds_no_fault()
+    {
+        var registration = LobbyApplicationReader.ReadFrom([Key("Midtown Madness 2")]);
+
+        Assert.Equal("Midtown Madness 2", registration.KeyName);
     }
 
     [Fact]

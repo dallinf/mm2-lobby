@@ -438,9 +438,8 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
 
     private static string Report(List<string> trail) => string.Join(Environment.NewLine, trail);
 
-    private static LobbyRegistration ReadRegistration() => OperatingSystem.IsWindows()
-        ? LobbyApplicationReader.ReadFromRegistry()
-        : new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
+    private static LobbyRegistration ReadRegistration()
+        => LobbyApplicationReader.ReadFromThisComputer();
 
     /// <summary>
     /// This method is true while a process called midtown2 runs.

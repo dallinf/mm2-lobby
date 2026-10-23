@@ -674,7 +674,12 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             ShowTheChecks(results);
             _preflightPassed = PreflightRunner.AllPassed(results);
-            SetupExpanded = !_preflightPassed;
+
+            // The panel opens for an advisory check too, and only the gate on
+            // Host and Join lets that check go. A panel that closed over an
+            // advisory row would hide the one thing that the app offers the
+            // player, and no player would ever press that Fix.
+            SetupExpanded = results.Any(result => result.Status != CheckStatus.Pass);
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {

@@ -298,13 +298,50 @@ public class LobbyEnvironmentTests : IDisposable
     }
 
     [Fact]
-    public void The_environment_builds_the_four_checks()
+    public void The_environment_builds_the_six_checks()
     {
+        // The two advisory checks stand last. Both read the game path, and
+        // the Midtown Madness 2 check writes that path.
         var names = Build().CreateChecks().Select(item => item.Check.Name).ToList();
 
         Assert.Equal(
-            new[] { "ZeroTier", "DirectPlay", "Midtown Madness 2", "Windows Firewall" },
+            new[]
+            {
+                "ZeroTier",
+                "DirectPlay",
+                "Midtown Madness 2",
+                "Windows Firewall",
+                "DirectPlay registration",
+                "Compatibility mode",
+            },
             names);
+    }
+
+    [Fact]
+    public void The_four_checks_that_block_the_lobby_still_block_it()
+    {
+        // These four checks name a condition that MM2 needs. A player with a
+        // failure in one of them cannot race at all, so the window must keep
+        // Host and Join off.
+        var blocking = Build().CreateChecks()
+            .Where(item => item.Check.Blocks)
+            .Select(item => item.Check.Name)
+            .ToList();
+
+        Assert.Equal(
+            new[] { "ZeroTier", "DirectPlay", "Midtown Madness 2", "Windows Firewall" },
+            blocking);
+    }
+
+    [Fact]
+    public void The_two_new_checks_give_advice_and_do_not_block_the_lobby()
+    {
+        var advisory = Build().CreateChecks()
+            .Where(item => !item.Check.Blocks)
+            .Select(item => item.Check.Name)
+            .ToList();
+
+        Assert.Equal(new[] { "DirectPlay registration", "Compatibility mode" }, advisory);
     }
 
     [Fact]

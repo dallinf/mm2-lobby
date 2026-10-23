@@ -167,6 +167,63 @@ public class LobbyViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task An_advisory_check_that_fails_still_starts_the_lobby()
+    {
+        // The app raced before these two checks existed. A player who cannot
+        // change the registry must keep that race.
+        AddCheck("ZeroTier");
+        var advisory = new FakeCheck("Compatibility mode", CheckStatus.Fail) { Blocks = false };
+        _environment.Checks.Add(new CheckEntry(advisory));
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Equal(1, _environment.CreateLobbyCount);
+        Assert.True(model.CanHost);
+    }
+
+    [Fact]
+    public async Task The_window_shows_the_row_of_an_advisory_check_that_fails()
+    {
+        // The row, the reason and the Fix button all stay. Only the gate on
+        // Host and Join lets this check go.
+        AddCheck("ZeroTier");
+        var advisory = new FakeCheck("Compatibility mode", CheckStatus.Fail)
+        {
+            Blocks = false,
+            Message = "The game runs in the WINXPSP2 compatibility mode.",
+            FixDescription = "The fix removes the mode.",
+        };
+        _environment.Checks.Add(new CheckEntry(advisory));
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        var row = model.CheckRows.Single(one => one.Name == "Compatibility mode");
+
+        Assert.Equal("Optional", row.Mark);
+        Assert.Equal("The game runs in the WINXPSP2 compatibility mode.", row.Message);
+        Assert.Equal("The fix removes the mode.", row.Advice);
+        Assert.True(row.ShowAction);
+    }
+
+    [Fact]
+    public async Task The_setup_list_stays_open_for_an_advisory_check_that_fails()
+    {
+        // The panel closes when every check passes. Without this rule the
+        // panel would close over the row, and no player would ever read the
+        // one thing that the app offers them.
+        AddCheck("ZeroTier");
+        var advisory = new FakeCheck("Compatibility mode", CheckStatus.Fail) { Blocks = false };
+        _environment.Checks.Add(new CheckEntry(advisory));
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.True(model.SetupExpanded);
+    }
+
+    [Fact]
     public async Task The_setup_list_holds_a_row_for_every_check()
     {
         // A check that passes keeps its row, because the firewall row offers a

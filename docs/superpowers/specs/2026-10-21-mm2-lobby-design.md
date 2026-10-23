@@ -343,11 +343,15 @@ inside the game. Most support work lands here, so this screen deserves care.
 public enum CheckStatus { Pass, Fail, Unavailable }
 
 public sealed record CheckResult(
-    string Name, CheckStatus Status, string Message, string? FixDescription);
+    string Name, CheckStatus Status, string Message, string? FixDescription)
+{
+    public bool Blocks { get; init; } = true;
+}
 
 public interface ICheck
 {
     string Name { get; }
+    bool Blocks => true;
     Task<CheckResult> RunAsync(CancellationToken ct);
     Task<CheckResult> FixAsync(CancellationToken ct);
 }
@@ -356,17 +360,39 @@ public interface ICheck
 `PreflightRunner` runs every check even when an earlier one fails, so the
 player sees the whole list at once rather than one problem per attempt.
 
-| Check | Test | Fix |
-|---|---|---|
-| ZeroTier | `IZeroTierClient` reports the service online and the network status `OK` | Open the download page, or start the service, or show the network ID to join |
-| DirectPlay | `C:\Windows\SysWOW64\dplayx.dll` exists | Run `dism /online /enable-feature /featurename:DirectPlay /all`, with an elevation prompt |
-| MM2 found | Enumerate the values under `HKLM\SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Midtown Madness 2` and take the first that points at an existing `midtown2.exe`; otherwise use the saved path | Open a file picker and save the path |
-| Firewall | `netsh advfirewall firewall show rule name="MM2 Lobby - Midtown Madness 2"` finds the rule | Add inbound and outbound allow rules, with an elevation prompt |
+| Check | Blocks | Test | Fix |
+|---|---|---|---|
+| ZeroTier | yes | `IZeroTierClient` reports the service online and the network status `OK` | Open the download page, or start the service, or show the network ID to join |
+| DirectPlay | yes | `C:\Windows\SysWOW64\dplayx.dll` exists | Run `dism /online /enable-feature /featurename:DirectPlay /all`, with an elevation prompt |
+| MM2 found | yes | Enumerate the values under `HKLM\SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Midtown Madness 2` and take the first that points at an existing `midtown2.exe`; otherwise use the saved path | Open a file picker and save the path |
+| Firewall | yes | `netsh advfirewall firewall show rule name="MM2 Lobby - Midtown Madness 2"` finds the rule | Add inbound and outbound allow rules, with an elevation prompt |
+| DirectPlay registration | no | The key under `HKLM\SOFTWARE\WOW6432Node\Microsoft\DirectPlay\Applications` names this computer's `midtown2.exe`, its `File` value starts with a backslash, and it holds no `Launcher` value | Import one registry script with `reg import`, with one elevation prompt. The script writes `Guid`, `Path`, `File`, `CommandLine` and `CurrentDirectory`, and it deletes `Launcher` |
+| Compatibility mode | no | The value of `midtown2.exe` under `HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers` holds no legacy operating system token | Remove the operating system tokens and keep every other token. The key belongs to the account of the player, so this fix needs no elevation |
 
 The DirectPlay check reads a file rather than asking DISM, because
 `dism /online /get-featureinfo` needs administrator rights and the check must
 run without them. Verify the file test during the first manual test. If it
 proves wrong, fall back to the DISM query and accept the elevation prompt.
+
+#### A check that blocks, and a check that gives advice
+
+`ICheck.Blocks` is true for every check that names a condition MM2 needs.
+`PreflightRunner.AllPassed` reads the blocking results only, and the window
+gates **Host** and **Join** on that answer.
+
+The last two checks set `Blocks` to false. The app raced before either one
+existed: the window shows the address of the host, the player types it into
+MM2, and the race happens. Each of these two checks buys the one click start
+and nothing else. A block would take the race away from a player who cannot
+write the registry, for example on a work computer with no administrator
+rights. That is a loss of capability, and this app does not take a capability
+away to add a feature.
+
+**The window still owns every row.** It shows the name, the state, the reason
+and the **Fix** button of an advisory check beside the others. The row reads
+`Optional` and not `Problem`, so the player can see that the race goes on. The
+setup panel opens while any check does not pass, blocking or not, so a player
+always reads the offer.
 
 The firewall check matters most. When the firewall blocks the game, MM2 fails
 silently and reports only that it found no host.
@@ -470,6 +496,8 @@ These are the failures the group will actually meet.
 | A friend is online but their app is not running | Show the remembered name and "app not running", which the user must be able to tell apart from "offline" |
 | DirectPlay is turned off | `PreflightCheck` blocks and runs the `dism` command |
 | The firewall blocks the game | `PreflightCheck` adds the rule before the player ever starts MM2 |
+| The DirectPlay entry of MM2 is missing, or it names another folder, or it holds a `Launcher` value | **The window shows the row and does not block.** The app offers to write the entry with one elevation prompt. Without the entry the player still races: the window shows the address and the player types it into MM2. A block would take that race away from a player who holds no administrator rights. The window gates **Host** and **Join** on the blocking checks only |
+| MM2 carries a legacy compatibility mode | **The window shows the row and does not block**, for the same reason. The app offers to remove the mode. The fix writes `HKCU`, so Windows asks for no permission. The fix removes the operating system tokens only, because a player can carry other tokens that the game needs |
 | The host's link is relayed, not direct | Show the link quality beside the host's name, the way GameRanger shows a ping estimate, so a player understands a slow race |
 | App versions disagree | The announcement carries `appVersion`, `PeerTable` stores it, and `Peer.AppVersion` carries it to the window. **The window owns the warning** — it compares each peer's version against its own and marks any mismatch. Revision 2 demanded this warning without giving `Peer` a field to carry it, so no task could have built it |
 | A cycle fails for any reason | The pump absorbs it and the next tick tries again, so the list goes stale rather than frozen. `LobbyService.LastCycleFault` holds the exception and the window shows it, because otherwise no information about the failure reaches anybody |
