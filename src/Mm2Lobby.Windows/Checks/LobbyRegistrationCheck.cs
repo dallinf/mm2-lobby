@@ -7,7 +7,7 @@ using Mm2Lobby.Windows.Lobby;
 namespace Mm2Lobby.Windows.Checks;
 
 /// <summary>
-/// This check looks at the DirectPlay entry of Midtown Madness 2. The lobby
+/// This check looks at the DirectPlay entry that this app owns. The lobby
 /// launcher reads that entry, and it starts the game in a race only when the
 /// entry is correct. A player who joins then types no address.
 /// </summary>
@@ -23,33 +23,46 @@ namespace Mm2Lobby.Windows.Checks;
 /// one script and runs one elevated command, and Windows shows one permission
 /// prompt.
 /// </para>
+/// <para>
+/// WARNING: this app owns one key, and it reads and writes that key only. An
+/// installer of the game writes a key of its own, that key holds the
+/// application GUID of the game, and a program such as GameRanger reads it. A
+/// fix that wrote over that key would break the other program, and the player
+/// would never connect the two.
+/// </para>
 /// </remarks>
 public sealed class LobbyRegistrationCheck : ICheck
 {
     /// <summary>The key that DirectPlay reads, under HKEY_LOCAL_MACHINE.</summary>
     public const string KeyPath = LobbyApplicationReader.KeyPath;
 
-    /// <summary>The name of the key that the fix writes when no key exists.</summary>
-    public const string DefaultKeyName = "Midtown Madness 2";
+    /// <summary>
+    /// The name of the key that this app owns. The app writes this key, and
+    /// it reads this key. It changes no other key.
+    /// </summary>
+    public const string KeyName = LobbyApplicationReader.OwnKeyName;
 
     /// <summary>
-    /// The application GUID that the fix writes on a computer that holds no
-    /// entry at all.
+    /// The application GUID of this group of players.
     /// <para>
-    /// WARNING: nobody has supplied this value yet, so it is null and the fix
-    /// refuses that one case. Do not put a new GUID here. DirectPlay joins
-    /// only players who share one application GUID, and a value that this app
-    /// invented would match no friend. MM2 would then report that it found no
-    /// host, and it would give no reason.
+    /// DirectPlay shows a player only the sessions that carry the same
+    /// application GUID. The value does not have to be the GUID of the game.
+    /// It has to be the same value on every computer of the group, and every
+    /// player runs this app.
     /// </para>
     /// <para>
-    /// The owner must read the Guid value of a computer where the game is
-    /// registered and works, and write that value here. Every other case
-    /// keeps the GUID that the computer already holds, so the fix mends a
-    /// wrong path and a Launcher value with no such value.
+    /// A run on two computers on 2026-10-23 proved this value. One player
+    /// hosted, the other player joined, and the player who joined typed no
+    /// address.
+    /// </para>
+    /// <para>
+    /// WARNING: do not change this value. Every player already holds it. A
+    /// player who holds another value meets nobody, and MM2 then reports that
+    /// it found no host and gives no reason.
     /// </para>
     /// </summary>
-    public static readonly Guid? SharedApplicationGuid = null;
+    public static readonly Guid ApplicationGuid =
+        new("42418287-74D9-4C2D-A8D0-1B5D4D811C21");
 
     private const string Program = "reg.exe";
 
@@ -57,7 +70,6 @@ public sealed class LobbyRegistrationCheck : ICheck
     private readonly IProcessRunner _elevatedRunner;
     private readonly Func<LobbyRegistration> _readRegistration;
     private readonly Func<string, string> _writeScript;
-    private readonly Guid? _sharedGuid;
 
     /// <summary>The check that the app builds. It reads the real registry.</summary>
     /// <param name="config">The configuration that the window shares with the lobby.</param>
@@ -66,34 +78,27 @@ public sealed class LobbyRegistrationCheck : ICheck
         : this(
             config,
             elevatedRunner,
-            LobbyApplicationReader.ReadFromThisComputer,
-            WriteScriptToTempFile,
-            SharedApplicationGuid)
+            LobbyApplicationReader.ReadOwnFromThisComputer,
+            WriteScriptToTempFile)
     {
     }
 
     /// <param name="config">The configuration that the window shares with the lobby.</param>
     /// <param name="elevatedRunner">Writes the key. It needs administrator rights.</param>
-    /// <param name="readRegistration">Reads the entry of this computer.</param>
+    /// <param name="readRegistration">Reads the key of this app on this computer.</param>
     /// <param name="writeScript">
     /// Writes the registry script to a file, and gives the path of that file.
-    /// </param>
-    /// <param name="sharedGuid">
-    /// The application GUID for a computer that holds no entry. A null value
-    /// makes the fix refuse that one case.
     /// </param>
     internal LobbyRegistrationCheck(
         AppConfig config,
         IProcessRunner elevatedRunner,
         Func<LobbyRegistration> readRegistration,
-        Func<string, string> writeScript,
-        Guid? sharedGuid)
+        Func<string, string> writeScript)
     {
         _config = config;
         _elevatedRunner = elevatedRunner;
         _readRegistration = readRegistration;
         _writeScript = writeScript;
-        _sharedGuid = sharedGuid;
     }
 
     public string Name => "DirectPlay registration";
@@ -131,7 +136,7 @@ public sealed class LobbyRegistrationCheck : ICheck
             LobbyRegistrationFault.LauncherValuePresent => (
                 "The DirectPlay entry holds a Launcher value, and that value stops the start.",
                 " The fix also deletes the Launcher value."),
-            _ => NamesThisGame(registration, path),
+            _ => EntryIsOurs(registration, path),
         };
 
         if (message.Length == 0)
@@ -163,28 +168,10 @@ public sealed class LobbyRegistrationCheck : ICheck
                 "Run the Midtown Madness 2 check again and choose midtown2.exe.");
         }
 
-        var registration = _readRegistration();
-
-        // The fix keeps the GUID that the computer already holds. That value
-        // came from the game, and every friend who installed the game holds
-        // the same one. A new value would meet no friend.
-        var guid = registration.Entry?.ApplicationGuid ?? _sharedGuid;
-
-        if (guid is null)
-        {
-            return new CheckResult(
-                Name,
-                CheckStatus.Fail,
-                "The app does not know the application GUID of Midtown Madness 2, "
-                    + "and it never invents one.",
-                "DirectPlay joins only players who share one application GUID. "
-                    + "Ask the person who runs the group for the Guid value of a "
-                    + "computer where the game is registered. Or install Midtown "
-                    + "Madness 2 again with its own installer, which writes the entry.");
-        }
-
+        // The fix writes the key of this app, with the GUID of the group. It
+        // reads nothing of another key, and it writes nothing to another key.
         var script = RegistryScript(
-            registration.KeyName ?? DefaultKeyName, guid.Value, split.Value.Folder, split.Value.File);
+            KeyName, ApplicationGuid, split.Value.Folder, split.Value.File);
 
         var scriptPath = _writeScript(script);
         var arguments = $"import \"{scriptPath}\"";
@@ -281,13 +268,27 @@ public sealed class LobbyRegistrationCheck : ICheck
     }
 
     /// <summary>
-    /// This method reports the entry that names another game file. The reader
-    /// found no fault, so the entry is good for some other copy of the game.
+    /// This method reads the two things that the reader does not judge: the
+    /// application GUID of the group, and the game of this computer. An empty
+    /// message means that the entry is good.
     /// </summary>
-    private static (string Message, string Extra) NamesThisGame(
+    private static (string Message, string Extra) EntryIsOurs(
         LobbyRegistration registration, string gamePath)
     {
-        var named = registration.Entry!.GameFilePath;
+        var entry = registration.Entry!;
+
+        // The app owns this key, so the key holds the GUID of the group. A
+        // player who holds another value meets nobody, and MM2 gives no
+        // reason for that.
+        if (entry.ApplicationGuid != ApplicationGuid)
+        {
+            return (
+                "The DirectPlay entry holds another application GUID, "
+                    + "so you would meet none of your friends.",
+                "");
+        }
+
+        var named = entry.GameFilePath;
 
         if (string.Equals(named, gamePath, StringComparison.OrdinalIgnoreCase))
         {

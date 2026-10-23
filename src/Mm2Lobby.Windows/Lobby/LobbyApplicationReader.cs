@@ -78,17 +78,9 @@ internal sealed record LobbyApplicationEntry(
 /// <summary>What the reader found, and the fault that it found.</summary>
 /// <param name="Entry">The registration, or null when the reader found a fault.</param>
 /// <param name="Fault">The fault that the reader found.</param>
-/// <param name="KeyName">
-/// The name of the key that holds the word midtown, or null when no key holds
-/// it. The reader reports this name beside a fault that gives no entry, so the
-/// setup check can mend the key that the player already has. A fix that wrote
-/// a second key with that word would leave the reader a choice between two
-/// keys.
-/// </param>
 internal sealed record LobbyRegistration(
     LobbyApplicationEntry? Entry,
-    LobbyRegistrationFault Fault,
-    string? KeyName = null);
+    LobbyRegistrationFault Fault);
 
 /// <summary>
 /// This class reads the registration of MM2 with the DirectPlay lobby. The
@@ -111,6 +103,19 @@ internal static class LobbyApplicationReader
     /// <summary>The word that names the key of MM2.</summary>
     public const string KeyNameMark = "midtown";
 
+    /// <summary>
+    /// The name of the key that this app writes. The firewall rules of the
+    /// project carry the same name, so one name marks every thing that this
+    /// app owns.
+    /// <para>
+    /// The app writes this key and reads this key. It never changes a key
+    /// that another program wrote. An installer of the game writes a key of
+    /// its own, that key holds the application GUID of the game, and another
+    /// program such as GameRanger reads it.
+    /// </para>
+    /// </summary>
+    public const string OwnKeyName = "MM2 Lobby - Midtown Madness 2";
+
     private const string GuidValue = "Guid";
     private const string PathValue = "Path";
     private const string FileValue = "File";
@@ -124,31 +129,65 @@ internal static class LobbyApplicationReader
     private const string LauncherValue = "Launcher";
 
     /// <summary>
-    /// This method chooses the key of MM2 and reads its values. It returns the
-    /// first fault that it finds.
+    /// This method chooses the key that the launcher reads, and it reads the
+    /// values of that key.
+    /// <para>
+    /// The key of this app comes first. Its name also holds the word midtown,
+    /// so a match on that word alone could choose the key of an installer
+    /// instead. That key holds the application GUID of the game, and the
+    /// group shares another GUID. The players would then meet nobody.
+    /// </para>
+    /// <para>
+    /// A computer with no key of this app keeps the key that it has. The
+    /// computer of the owner carries such a key from the spike, and fourteen
+    /// runs worked against it.
+    /// </para>
     /// </summary>
     public static LobbyRegistration ReadFrom(IEnumerable<LobbyApplicationKey> keys)
     {
-        var key = keys.FirstOrDefault(
-            one => one.Name.Contains(KeyNameMark, StringComparison.OrdinalIgnoreCase));
+        var all = keys.ToList();
 
+        var key = Named(all, OwnKeyName)
+            ?? all.FirstOrDefault(
+                one => one.Name.Contains(KeyNameMark, StringComparison.OrdinalIgnoreCase));
+
+        return ValuesOf(key);
+    }
+
+    /// <summary>
+    /// This method reads one key by its name, and it reads no other key. The
+    /// setup check owns one key, so it judges that key alone.
+    /// </summary>
+    /// <param name="keys">Every key under the Applications key.</param>
+    /// <param name="name">The name of the key to read.</param>
+    public static LobbyRegistration ReadNamed(
+        IEnumerable<LobbyApplicationKey> keys, string name)
+        => ValuesOf(Named(keys.ToList(), name));
+
+    /// <summary>
+    /// This method reads the values of one key. It returns the first fault
+    /// that it finds.
+    /// </summary>
+    /// <param name="key">The key, or null when the reader found none.</param>
+    private static LobbyRegistration ValuesOf(LobbyApplicationKey? key)
+    {
         if (key is null) return new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
 
         if (!Guid.TryParse(Read(key, GuidValue), out var applicationGuid))
         {
-            return new LobbyRegistration(null, LobbyRegistrationFault.NoGuid, key.Name);
+            return new LobbyRegistration(null, LobbyRegistrationFault.NoGuid);
         }
 
         var folder = Read(key, PathValue);
         if (string.IsNullOrWhiteSpace(folder))
         {
-            return new LobbyRegistration(null, LobbyRegistrationFault.NoPath, key.Name);
+            return new LobbyRegistration(null, LobbyRegistrationFault.NoPath);
         }
 
         var file = Read(key, FileValue);
         if (string.IsNullOrWhiteSpace(file))
         {
-            return new LobbyRegistration(null, LobbyRegistrationFault.NoFile, key.Name);
+            return new LobbyRegistration(null, LobbyRegistrationFault.NoFile);
         }
 
         var entry = new LobbyApplicationEntry(
@@ -161,18 +200,24 @@ internal static class LobbyApplicationReader
 
         if (!file.StartsWith('\\'))
         {
-            return new LobbyRegistration(
-                entry, LobbyRegistrationFault.FileWithoutLeadingBackslash, key.Name);
+            return new LobbyRegistration(entry, LobbyRegistrationFault.FileWithoutLeadingBackslash);
         }
 
         if (key.Values.ContainsKey(LauncherValue))
         {
-            return new LobbyRegistration(
-                entry, LobbyRegistrationFault.LauncherValuePresent, key.Name);
+            return new LobbyRegistration(entry, LobbyRegistrationFault.LauncherValuePresent);
         }
 
-        return new LobbyRegistration(entry, LobbyRegistrationFault.None, key.Name);
+        return new LobbyRegistration(entry, LobbyRegistrationFault.None);
     }
+
+    /// <summary>
+    /// This method finds one key by name. The registry ignores the letter
+    /// case of a key name, so this method ignores it too.
+    /// </summary>
+    private static LobbyApplicationKey? Named(IReadOnlyList<LobbyApplicationKey> keys, string name)
+        => keys.FirstOrDefault(
+            one => one.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// This method reads the registration of this computer. It gives NoKey on
@@ -184,17 +229,32 @@ internal static class LobbyApplicationReader
         : new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
 
     /// <summary>
+    /// This method reads the key of this app on this computer. It gives NoKey
+    /// on a computer that does not run Windows.
+    /// </summary>
+    public static LobbyRegistration ReadOwnFromThisComputer() => OperatingSystem.IsWindows()
+        ? ReadNamed(KeysFromRegistry(), OwnKeyName)
+        : new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
+
+    /// <summary>
     /// This method reads the real registry. No test covers it, because a test
     /// cannot read a Windows registry on every computer. It holds the read and
     /// nothing else, and ReadFrom holds every decision.
     /// </summary>
     [SupportedOSPlatform("windows")]
-    public static LobbyRegistration ReadFromRegistry()
-    {
-        using var parent = Registry.LocalMachine.OpenSubKey(KeyPath);
-        if (parent is null) return new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
+    public static LobbyRegistration ReadFromRegistry() => ReadFrom(KeysFromRegistry());
 
+    /// <summary>
+    /// This method lists every key under the Applications key. No test covers
+    /// it, for the same reason.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static List<LobbyApplicationKey> KeysFromRegistry()
+    {
         var keys = new List<LobbyApplicationKey>();
+
+        using var parent = Registry.LocalMachine.OpenSubKey(KeyPath);
+        if (parent is null) return keys;
 
         foreach (var name in parent.GetSubKeyNames())
         {
@@ -211,7 +271,7 @@ internal static class LobbyApplicationReader
             keys.Add(new LobbyApplicationKey(name, values));
         }
 
-        return ReadFrom(keys);
+        return keys;
     }
 
     private static string? Read(LobbyApplicationKey key, string name) =>

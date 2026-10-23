@@ -6,6 +6,7 @@ namespace Mm2Lobby.Core.Tests.Launch;
 public class LobbyApplicationReaderTests
 {
     private const string Guid1 = "A1B2C3D4-0000-0000-0000-000000000001";
+    private const string Guid2 = "A1B2C3D4-0000-0000-0000-000000000002";
 
     private static LobbyApplicationKey Key(
         string name,
@@ -34,29 +35,81 @@ public class LobbyApplicationReaderTests
 
         Assert.Equal(LobbyRegistrationFault.NoKey, registration.Fault);
         Assert.Null(registration.Entry);
-        Assert.Null(registration.KeyName);
     }
 
     [Fact]
-    public void The_reader_reports_the_key_name_of_a_key_that_holds_a_fault()
+    public void The_name_of_the_key_of_this_app_is_the_name_the_group_documents()
     {
-        // The fix writes the values of the key that the player already has.
-        // Without this name the fix would write a second key that also holds
-        // the word midtown, and the reader would then choose between two
-        // keys.
-        var registration = LobbyApplicationReader.ReadFrom([Key("Midtown Madness 2", guid: null)]);
-
-        Assert.Equal(LobbyRegistrationFault.NoGuid, registration.Fault);
-        Assert.Null(registration.Entry);
-        Assert.Equal("Midtown Madness 2", registration.KeyName);
+        // The firewall rules of the project carry the same name. The app owns
+        // every thing with that name, and it changes nothing else.
+        Assert.Equal("MM2 Lobby - Midtown Madness 2", LobbyApplicationReader.OwnKeyName);
     }
 
     [Fact]
-    public void The_reader_reports_the_key_name_of_a_key_that_holds_no_fault()
+    public void The_reader_takes_the_key_of_this_app_before_any_other_key()
     {
+        // The name of our key also holds the word midtown. A match on that
+        // word alone could therefore choose the key of the installer, and
+        // that key holds the application GUID of the game and not the GUID of
+        // this group. The players would then meet nobody.
+        var registration = LobbyApplicationReader.ReadFrom(
+            [Key("Midtown Madness 2", guid: Guid2), Key(LobbyApplicationReader.OwnKeyName)]);
+
+        Assert.Equal(Guid.Parse(Guid1), registration.Entry!.ApplicationGuid);
+        Assert.Equal(LobbyApplicationReader.OwnKeyName, registration.Entry.KeyName);
+    }
+
+    [Fact]
+    public void The_reader_takes_another_key_when_this_app_wrote_none()
+    {
+        // The computer of the owner carries a key from the spike, and the
+        // launcher worked against it. That must go on working until the
+        // player presses Fix.
         var registration = LobbyApplicationReader.ReadFrom([Key("Midtown Madness 2")]);
 
-        Assert.Equal("Midtown Madness 2", registration.KeyName);
+        Assert.Equal("Midtown Madness 2", registration.Entry!.KeyName);
+    }
+
+    [Fact]
+    public void ReadNamed_takes_the_key_of_that_name_and_no_other()
+    {
+        // The setup check reads the key of this app only. A key that another
+        // program wrote belongs to that program.
+        var registration = LobbyApplicationReader.ReadNamed(
+            [Key("Midtown Madness 2", guid: Guid2), Key(LobbyApplicationReader.OwnKeyName)],
+            LobbyApplicationReader.OwnKeyName);
+
+        Assert.Equal(Guid.Parse(Guid1), registration.Entry!.ApplicationGuid);
+    }
+
+    [Fact]
+    public void ReadNamed_reports_no_key_when_no_key_carries_that_name()
+    {
+        var registration = LobbyApplicationReader.ReadNamed(
+            [Key("Midtown Madness 2")], LobbyApplicationReader.OwnKeyName);
+
+        Assert.Equal(LobbyRegistrationFault.NoKey, registration.Fault);
+        Assert.Null(registration.Entry);
+    }
+
+    [Fact]
+    public void ReadNamed_ignores_the_letter_case_of_the_name()
+    {
+        // The registry ignores the letter case of a key name.
+        var registration = LobbyApplicationReader.ReadNamed(
+            [Key("mm2 lobby - MIDTOWN madness 2")], LobbyApplicationReader.OwnKeyName);
+
+        Assert.Equal(LobbyRegistrationFault.None, registration.Fault);
+    }
+
+    [Fact]
+    public void ReadNamed_reads_a_fault_of_the_key_that_it_names()
+    {
+        var registration = LobbyApplicationReader.ReadNamed(
+            [Key(LobbyApplicationReader.OwnKeyName, guid: null)],
+            LobbyApplicationReader.OwnKeyName);
+
+        Assert.Equal(LobbyRegistrationFault.NoGuid, registration.Fault);
     }
 
     [Fact]

@@ -16,10 +16,11 @@ public class LobbyRegistrationCheckTests
 {
     private const string Folder = @"C:\Games\Midtown Madness 2";
     private const string GamePath = $@"{Folder}\midtown2.exe";
-    private const string KeyName = "Midtown Madness 2";
+    private const string KeyName = "MM2 Lobby - Midtown Madness 2";
     private const string ScriptPath = @"C:\Temp\mm2-lobby.reg";
 
-    private static readonly Guid TheGuid = new("A1B2C3D4-0000-0000-0000-000000000001");
+    /// <summary>The GUID that a run on two computers proved.</summary>
+    private static readonly Guid TheGuid = LobbyRegistrationCheck.ApplicationGuid;
 
     private readonly AppConfig _config = new() { GamePath = GamePath };
     private readonly FakeElevatedProcessRunner _elevated = new();
@@ -30,15 +31,15 @@ public class LobbyRegistrationCheckTests
     private LobbyRegistration _registration = Good();
 
     private static LobbyApplicationEntry Entry(
-        string folder = Folder, string file = @"\midtown2.exe")
-        => new(KeyName, TheGuid, folder, file, "", folder);
+        string folder = Folder, string file = @"\midtown2.exe", Guid? guid = null)
+        => new(KeyName, guid ?? TheGuid, folder, file, "", folder);
 
     private static LobbyRegistration Good()
-        => new(Entry(), LobbyRegistrationFault.None, KeyName);
+        => new(Entry(), LobbyRegistrationFault.None);
 
     private static string Import(string path = ScriptPath) => $"reg.exe import \"{path}\"";
 
-    private LobbyRegistrationCheck Check(Guid? sharedGuid = null) => new(
+    private LobbyRegistrationCheck Check() => new(
         _config,
         _elevated,
         () => _registration,
@@ -46,8 +47,7 @@ public class LobbyRegistrationCheckTests
         {
             _scripts.Add(script);
             return ScriptPath;
-        },
-        sharedGuid);
+        });
 
     /// <summary>The elevated runner answers with a success for the import.</summary>
     private void ImportWorks() => _elevated.Returns("reg.exe", $"import \"{ScriptPath}\"", 0);
@@ -64,6 +64,27 @@ public class LobbyRegistrationCheckTests
     public void The_check_names_itself_for_the_row()
     {
         Assert.Equal("DirectPlay registration", Check().Name);
+    }
+
+    [Fact]
+    public void The_app_writes_a_key_of_its_own_and_touches_no_other()
+    {
+        // An installer of the game writes a key of its own, and that key
+        // holds the application GUID of the game. Another program such as
+        // GameRanger reads that GUID. This app writes its own key, so it
+        // breaks nothing that another program needs.
+        Assert.Equal("MM2 Lobby - Midtown Madness 2", LobbyRegistrationCheck.KeyName);
+    }
+
+    [Fact]
+    public void The_application_GUID_is_the_one_value_that_the_group_shares()
+    {
+        // DirectPlay shows a player only the sessions that carry the same
+        // application GUID. A run on two computers on 2026-10-23 proved this
+        // value, and every player already holds it.
+        Assert.Equal(
+            Guid.Parse("42418287-74D9-4C2D-A8D0-1B5D4D811C21"),
+            LobbyRegistrationCheck.ApplicationGuid);
     }
 
     [Fact]
@@ -105,10 +126,29 @@ public class LobbyRegistrationCheckTests
     }
 
     [Fact]
+    public async Task Fails_when_the_entry_holds_another_application_GUID()
+    {
+        // A player whose key holds another GUID meets nobody of the group,
+        // and MM2 reports no host and gives no reason. The check must see
+        // that before the player meets it.
+        _registration = new LobbyRegistration(
+            Entry(guid: Guid.Parse("FFFFFFFF-0000-0000-0000-000000000002")),
+            LobbyRegistrationFault.None);
+
+        var result = await Check().RunAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Equal(
+            "The DirectPlay entry holds another application GUID, "
+                + "so you would meet none of your friends.",
+            result.Message);
+    }
+
+    [Fact]
     public async Task Fails_when_the_entry_names_another_game_file()
     {
         _registration = new LobbyRegistration(
-            Entry(folder: @"D:\Old\MM2"), LobbyRegistrationFault.None, KeyName);
+            Entry(folder: @"D:\Old\MM2"), LobbyRegistrationFault.None);
 
         var result = await Check().RunAsync(default);
 
@@ -124,7 +164,7 @@ public class LobbyRegistrationCheckTests
     {
         // A run on Windows 11 proved that this value stops the launch.
         _registration = new LobbyRegistration(
-            Entry(), LobbyRegistrationFault.LauncherValuePresent, KeyName);
+            Entry(), LobbyRegistrationFault.LauncherValuePresent);
 
         var result = await Check().RunAsync(default);
 
@@ -140,7 +180,7 @@ public class LobbyRegistrationCheckTests
     /// </summary>
     private async Task<CheckResult> ResultFor(LobbyRegistrationFault fault)
     {
-        _registration = new LobbyRegistration(null, fault, KeyName);
+        _registration = new LobbyRegistration(null, fault);
 
         return await Check().RunAsync(default);
     }
@@ -179,8 +219,7 @@ public class LobbyRegistrationCheckTests
         // start looks for the wrong file.
         _registration = new LobbyRegistration(
             Entry(file: "midtown2.exe"),
-            LobbyRegistrationFault.FileWithoutLeadingBackslash,
-            KeyName);
+            LobbyRegistrationFault.FileWithoutLeadingBackslash);
 
         var result = await Check().RunAsync(default);
 
@@ -242,7 +281,7 @@ public class LobbyRegistrationCheckTests
     public async Task The_advice_of_a_Launcher_value_says_that_the_fix_deletes_it()
     {
         _registration = new LobbyRegistration(
-            Entry(), LobbyRegistrationFault.LauncherValuePresent, KeyName);
+            Entry(), LobbyRegistrationFault.LauncherValuePresent);
 
         var result = await Check().RunAsync(default);
 
@@ -255,7 +294,7 @@ public class LobbyRegistrationCheckTests
         // Each elevated process shows one permission prompt. The fix writes
         // five values and deletes one, so it sends them all in one script.
         _registration = new LobbyRegistration(
-            Entry(folder: @"D:\Old\MM2"), LobbyRegistrationFault.None, KeyName);
+            Entry(folder: @"D:\Old\MM2"), LobbyRegistrationFault.None);
         ImportWorks();
 
         await Check().FixAsync(default);
@@ -267,7 +306,7 @@ public class LobbyRegistrationCheckTests
     public async Task The_fix_writes_every_value_of_the_entry()
     {
         _registration = new LobbyRegistration(
-            Entry(folder: @"D:\Old\MM2"), LobbyRegistrationFault.None, KeyName);
+            Entry(folder: @"D:\Old\MM2"), LobbyRegistrationFault.None);
         ImportWorks();
 
         await Check().FixAsync(default);
@@ -277,9 +316,9 @@ public class LobbyRegistrationCheckTests
         Assert.Equal(
             "Windows Registry Editor Version 5.00\r\n"
                 + "\r\n"
-                + @"[HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\DirectPlay\Applications\Midtown Madness 2]"
+                + @"[HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\DirectPlay\Applications\MM2 Lobby - Midtown Madness 2]"
                 + "\r\n"
-                + "\"Guid\"=\"{A1B2C3D4-0000-0000-0000-000000000001}\"\r\n"
+                + "\"Guid\"=\"{42418287-74D9-4C2D-A8D0-1B5D4D811C21}\"\r\n"
                 + "\"Path\"=\"C:\\\\Games\\\\Midtown Madness 2\"\r\n"
                 + "\"File\"=\"\\\\midtown2.exe\"\r\n"
                 + "\"CommandLine\"=\"\"\r\n"
@@ -290,75 +329,41 @@ public class LobbyRegistrationCheckTests
     }
 
     [Fact]
-    public async Task The_fix_writes_the_key_that_the_player_already_has()
+    public async Task The_fix_writes_the_key_of_this_app_and_names_no_other()
     {
-        // A second key that holds the word midtown would leave the reader a
-        // choice between two keys.
-        _registration = new LobbyRegistration(null, LobbyRegistrationFault.NoGuid, "MM2 midtown");
-        ImportWorks();
-
-        await Check(TheGuid).FixAsync(default);
-
-        Assert.Contains(@"\Applications\MM2 midtown]", Assert.Single(_scripts));
-    }
-
-    [Fact]
-    public async Task The_fix_names_the_key_Midtown_Madness_2_when_no_key_exists()
-    {
+        // An installer of the game writes its own key, and that key holds the
+        // application GUID of the game. A fix that wrote over it would break
+        // another program, and the player would never connect the two.
         _registration = new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
         ImportWorks();
 
-        await Check(TheGuid).FixAsync(default);
+        var script = Assert.Single(await Written());
 
-        Assert.Contains(@"\Applications\Midtown Madness 2]", Assert.Single(_scripts));
+        Assert.Contains(@"\Applications\MM2 Lobby - Midtown Madness 2]", script);
+        Assert.DoesNotContain(@"\Applications\Midtown Madness 2]", script);
     }
 
     [Fact]
-    public async Task The_fix_keeps_the_GUID_that_the_entry_already_holds()
+    public async Task The_fix_always_writes_the_GUID_of_the_group()
     {
-        // DirectPlay joins only players who share one application GUID. A
-        // computer that already works holds the GUID of the game, and the fix
-        // must not write another one over it.
+        // The app owns this key, so the key holds the value of the group and
+        // nothing else. The app never generates a GUID.
         _registration = new LobbyRegistration(
-            Entry(folder: @"D:\Old\MM2"), LobbyRegistrationFault.None, KeyName);
+            Entry(guid: Guid.Parse("FFFFFFFF-0000-0000-0000-000000000002")),
+            LobbyRegistrationFault.None);
         ImportWorks();
 
-        await Check(sharedGuid: Guid.Parse("FFFFFFFF-0000-0000-0000-000000000002"))
-            .FixAsync(default);
-
-        Assert.Contains("\"Guid\"=\"{A1B2C3D4-0000-0000-0000-000000000001}\"", _scripts[0]);
+        Assert.Contains(
+            "\"Guid\"=\"{42418287-74D9-4C2D-A8D0-1B5D4D811C21}\"",
+            Assert.Single(await Written()));
     }
 
-    [Fact]
-    public async Task The_fix_takes_the_shared_GUID_when_the_entry_holds_none()
+    /// <summary>This method runs the fix and gives every script that it wrote.</summary>
+    private async Task<List<string>> Written()
     {
-        _registration = new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
-        ImportWorks();
+        await Check().FixAsync(default);
 
-        await Check(sharedGuid: Guid.Parse("FFFFFFFF-0000-0000-0000-000000000002"))
-            .FixAsync(default);
-
-        Assert.Contains("\"Guid\"=\"{FFFFFFFF-0000-0000-0000-000000000002}\"", _scripts[0]);
-    }
-
-    [Fact]
-    public async Task The_fix_refuses_to_invent_an_application_GUID()
-    {
-        // The app never generates a GUID. DirectPlay joins only players who
-        // share one value, and a value that this computer invented would
-        // match no friend. The player then reads one step that they can take.
-        _registration = new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
-
-        var result = await Check(sharedGuid: null).FixAsync(default);
-
-        Assert.Equal(CheckStatus.Fail, result.Status);
-        Assert.Equal(
-            "The app does not know the application GUID of Midtown Madness 2, "
-                + "and it never invents one.",
-            result.Message);
-        Assert.Contains("the person who runs the group", result.FixDescription);
-        Assert.Empty(_scripts);
-        Assert.Empty(_elevated.Calls);
+        return _scripts;
     }
 
     [Fact]
@@ -397,7 +402,7 @@ public class LobbyRegistrationCheckTests
         _registration = new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
         _elevated.Returns("reg.exe", $"import \"{ScriptPath}\"", SystemProcessRunner.NotRunExitCode);
 
-        var result = await Check(TheGuid).FixAsync(default);
+        var result = await Check().FixAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("reg did not write the DirectPlay entry", result.Message);
@@ -411,7 +416,7 @@ public class LobbyRegistrationCheckTests
         _registration = new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
         _elevated.Returns("reg.exe", $"import \"{ScriptPath}\"", 1);
 
-        var result = await Check(TheGuid).FixAsync(default);
+        var result = await Check().FixAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Contains("The command failed.", result.Message);
@@ -426,7 +431,7 @@ public class LobbyRegistrationCheckTests
         _registration = new LobbyRegistration(null, LobbyRegistrationFault.NoKey);
         ImportWorks();
 
-        var result = await Check(TheGuid).FixAsync(default);
+        var result = await Check().FixAsync(default);
 
         Assert.Equal(CheckStatus.Fail, result.Status);
         Assert.Equal(
@@ -438,7 +443,7 @@ public class LobbyRegistrationCheckTests
     public async Task The_fix_reports_the_entry_that_it_wrote()
     {
         _registration = new LobbyRegistration(
-            Entry(folder: @"D:\Old\MM2"), LobbyRegistrationFault.None, KeyName);
+            Entry(folder: @"D:\Old\MM2"), LobbyRegistrationFault.None);
         ImportWorks();
 
         // The registry answers with the mended entry after the import.
@@ -451,8 +456,7 @@ public class LobbyRegistrationCheckTests
                 _scripts.Add(script);
                 _registration = Good();
                 return ScriptPath;
-            },
-            null);
+            });
 
         var result = await check.FixAsync(default);
 

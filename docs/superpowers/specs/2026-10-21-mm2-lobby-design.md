@@ -366,8 +366,43 @@ player sees the whole list at once rather than one problem per attempt.
 | DirectPlay | yes | `C:\Windows\SysWOW64\dplayx.dll` exists | Run `dism /online /enable-feature /featurename:DirectPlay /all`, with an elevation prompt |
 | MM2 found | yes | Enumerate the values under `HKLM\SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Midtown Madness 2` and take the first that points at an existing `midtown2.exe`; otherwise use the saved path | Open a file picker and save the path |
 | Firewall | yes | `netsh advfirewall firewall show rule name="MM2 Lobby - Midtown Madness 2"` finds the rule | Add inbound and outbound allow rules, with an elevation prompt |
-| DirectPlay registration | no | The key under `HKLM\SOFTWARE\WOW6432Node\Microsoft\DirectPlay\Applications` names this computer's `midtown2.exe`, its `File` value starts with a backslash, and it holds no `Launcher` value | Import one registry script with `reg import`, with one elevation prompt. The script writes `Guid`, `Path`, `File`, `CommandLine` and `CurrentDirectory`, and it deletes `Launcher` |
+| DirectPlay registration | no | The key `MM2 Lobby - Midtown Madness 2` under `HKLM\SOFTWARE\WOW6432Node\Microsoft\DirectPlay\Applications` holds the application GUID of the group, names this computer's `midtown2.exe`, starts its `File` value with a backslash, and holds no `Launcher` value | Import one registry script with `reg import`, with one elevation prompt. The script writes `Guid`, `Path`, `File`, `CommandLine` and `CurrentDirectory`, and it deletes `Launcher` |
 | Compatibility mode | no | The value of `midtown2.exe` under `HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers` holds no legacy operating system token | Remove the operating system tokens and keep every other token. The key belongs to the account of the player, so this fix needs no elevation |
+
+#### The app owns one DirectPlay key, and it touches no other
+
+The key name `MM2 Lobby - Midtown Madness 2` matches the firewall rules, so one
+name marks every thing that this app owns. The check reads that key alone, and
+the fix writes that key alone.
+
+An installer of the game writes a key of its own. That key holds the
+application GUID of the game, and another program such as GameRanger reads it.
+A fix that wrote over that key would break the other program, and the player
+would never connect the breakage to this app. Two keys that name the same
+executable sit beside each other with no harm.
+
+`LobbyApplicationReader.ReadFrom`, which the launcher uses, takes the key of
+this app before any other key. The name of our key also holds the word
+`midtown`, so a match on that word alone could choose the key of an installer.
+That key holds the GUID of the game and not the GUID of the group, and the
+players would then meet nobody. A computer with no key of this app keeps the
+key that it has, so a computer that worked before goes on working.
+
+#### The application GUID
+
+`LobbyRegistrationCheck.ApplicationGuid` holds
+`{42418287-74D9-4C2D-A8D0-1B5D4D811C21}`. A run on two computers on 2026-10-23
+proved it: one player hosted, the other joined, and the player who joined typed
+no address.
+
+DirectPlay shows a player only the sessions that carry the same application
+GUID. The value does not have to be the GUID of the game. It has to be the same
+value on every computer of the group, and every player runs this app. The fix
+writes this value every time, and the app never generates one.
+
+**Do not change this value.** Every player already holds it. A player who holds
+another value meets nobody, and MM2 then reports that it found no host and
+gives no reason.
 
 The DirectPlay check reads a file rather than asking DISM, because
 `dism /online /get-featureinfo` needs administrator rights and the check must
@@ -496,7 +531,7 @@ These are the failures the group will actually meet.
 | A friend is online but their app is not running | Show the remembered name and "app not running", which the user must be able to tell apart from "offline" |
 | DirectPlay is turned off | `PreflightCheck` blocks and runs the `dism` command |
 | The firewall blocks the game | `PreflightCheck` adds the rule before the player ever starts MM2 |
-| The DirectPlay entry of MM2 is missing, or it names another folder, or it holds a `Launcher` value | **The window shows the row and does not block.** The app offers to write the entry with one elevation prompt. Without the entry the player still races: the window shows the address and the player types it into MM2. A block would take that race away from a player who holds no administrator rights. The window gates **Host** and **Join** on the blocking checks only |
+| The DirectPlay key of this app is missing, or it holds another application GUID, or it names another folder, or it holds a `Launcher` value | **The window shows the row and does not block.** The app offers to write its own key with one elevation prompt. It reads and writes that key only, so a key that an installer wrote stays as it is. Without the key the player still races: the window shows the address and the player types it into MM2. A block would take that race away from a player who holds no administrator rights. The window gates **Host** and **Join** on the blocking checks only |
 | MM2 carries a legacy compatibility mode | **The window shows the row and does not block**, for the same reason. The app offers to remove the mode. The fix writes `HKCU`, so Windows asks for no permission. The fix removes the operating system tokens only, because a player can carry other tokens that the game needs |
 | The host's link is relayed, not direct | Show the link quality beside the host's name, the way GameRanger shows a ping estimate, so a player understands a slow race |
 | App versions disagree | The announcement carries `appVersion`, `PeerTable` stores it, and `Peer.AppVersion` carries it to the window. **The window owns the warning** — it compares each peer's version against its own and marks any mismatch. Revision 2 demanded this warning without giving `Peer` a field to carry it, so no task could have built it |
