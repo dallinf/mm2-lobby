@@ -38,6 +38,13 @@
        so they move there. The cap gives the list away before it clips the
        buttons, which is the right order.
 
+       The title of the host panel takes one line while the app races. It
+       takes three lines while the app cannot reach ZeroTier, because it then
+       names the state and the one action that repairs it. The list of peers
+       gives that height, as it gives the height of the report below. I
+       measured no new number on macOS for this piece, and the three buttons
+       keep the order of the cap: the list yields before they do.
+
        The report of the last start adds about 36 to the host panel. That
        panel appears after the player presses the launch button, and MM2 then
        covers the screen. The list of peers gives that height, because the
@@ -166,7 +173,10 @@
 
     <!-- The host panel and the two buttons. -->
     <StackPanel Grid.Row="4" Spacing="4" Margin="0,12,0,0">
-      <TextBlock Text="{Binding HostTitle}" FontWeight="Bold" />
+      <!-- This line carries the one sentence of a race, and it also carries
+           the three sentences of a state that the app cannot race in. So it
+           wraps. -->
+      <TextBlock Text="{Binding HostTitle}" FontWeight="Bold" TextWrapping="Wrap" />
       <SelectableTextBlock Text="{Binding HostAddress}" FontSize="30" FontWeight="Bold"
                            IsVisible="{Binding HasHostAddress}" />
 
@@ -197,14 +207,21 @@
         </ScrollViewer>
       </Expander>
 
-      <!-- Host and Join announce the player. The third button starts MM2.
-           MM2 covers the whole screen, so the address above must reach the
-           others before the game starts. The label of the third button names
-           the race for the host and the game for a player who joins. -->
+      <!-- Host and Join announce the player, and on the lobby path each of
+           them also starts the game in the race. The third button starts MM2.
+           Every label comes from the view model, because each one names what
+           the press will do: a label that promises a race on a path that
+           shows an address alone is a lie in a button.
+
+           On the fallback path Host and Join start no game. MM2 covers the
+           whole screen, so the address above must reach the player first, and
+           the third button then starts the game. After any start, the third
+           button offers a second start, which the owner needs when MM2
+           stops. -->
       <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
         <Button Content="{Binding HostButtonText}" IsEnabled="{Binding CanHost}"
                 Click="OnHostClick" Padding="14,6" />
-        <Button Content="Join the host" IsEnabled="{Binding CanJoin}"
+        <Button Content="{Binding JoinButtonText}" IsEnabled="{Binding CanJoin}"
                 Click="OnJoinClick" Padding="14,6" />
         <Button Content="{Binding StartGameButtonText}" IsEnabled="{Binding CanStartGame}"
                 Click="OnStartGameClick" Padding="14,6" />

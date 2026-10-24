@@ -303,6 +303,7 @@ public sealed class LobbyService : IAsyncDisposable
     public Peer? CurrentHost { get; }
     public string? MyAddress { get; }
     public Exception? LastCycleFault { get; }
+    public ZeroTierReach Reach { get; }
     public event Action<IReadOnlyList<Peer>>? PeersChanged;
 
     public Task StartAsync(CancellationToken ct);
@@ -333,6 +334,36 @@ anybody, ever. The window shows it so a player can say what it said.
 
 `StartAsync` may be called once. On any failure the caller disposes the instance
 and constructs a new one.
+
+#### The reach of the last cycle, and why it exists
+
+`ZeroTierClient` returns null for every failure and throws nothing. So a cycle
+that cannot reach ZeroTier sends no announcement, finds no peer, and records no
+fault: `LastCycleFault` stays null, because nothing threw. The window then
+showed "No one hosts a race now.", which is a different fact from "the app sees
+nobody", and it sent the owner to look for a friend while his own ZeroTier was
+stopped.
+
+`Reach` is the record of that silence. It holds three values, because the three
+states need three different sentences:
+
+| Value | What it means | What the window says |
+|---|---|---|
+| `NoAnswer` | ZeroTier gave no answer. The service is stopped, or the account cannot read the token. The service also starts at this value, before its first cycle | The app cannot reach ZeroTier, and the player starts the ZeroTier One service in the Services list of Windows |
+| `NoAddress` | ZeroTier answered, and this computer holds no address on the network | This computer has no address, and the player chooses **Check again** to read the reason from the ZeroTier row |
+| `OnTheNetwork` | ZeroTier answered, and this computer holds an address | "No one hosts a race now.", and only here |
+
+`RunCycleAsync` writes the value from the same two answers that
+`AnnounceAsync` reads, in the same order, so the reach cannot disagree with the
+silence of that cycle. A cycle that throws leaves the value of the last cycle
+that completed, and `LastCycleFault` then names the exception.
+
+**The window gates Host, Join and the launch button on `OnTheNetwork`**, and it
+names the reason in the same place. An announcement that nobody receives gives
+the player no race, and a window must not offer an action that it knows cannot
+work. The stop of a race stays live, because the stop needs no network. The
+service reads ZeroTier every cycle, so the buttons come back by themselves
+after the player starts the service.
 
 ### 5.6 PreflightCheck
 
@@ -471,6 +502,39 @@ then joins with no dialog. Phase two is Windows-only and is the hardest piece
 of the project. It ships behind the same user interface, so phase one keeps
 working if phase two stalls.
 
+#### One press plays, and the labels follow the path
+
+The window knows before a press whether the lobby path is open: every advisory
+check passed in the last run, and `ILobbyLauncher.CanLaunch` answers true. That
+is why the collapse below is honest. One method answers for it, the labels read
+it, and the press reads the same method.
+
+**While the lobby path is open, one press plays.** One press of **Host a race
+and start the game** announces the race and opens MM2 in it. One press of
+**Join the host and start the game** opens MM2 in the race of the host. The
+player types no address and presses nothing more.
+
+The two steps existed for one reason: MM2 covers the whole screen, so the
+player had to read the address of the race before the game hid it. The lobby
+launch gives the address to the game, and that reason is gone.
+
+**While the lobby path is shut, the two steps stay.** **Host a race** and
+**Join the host** announce the player and start no game. He reads the address,
+and then the launch button starts MM2. No label promises a game that its own
+path does not start.
+
+**A press of Host or Join never starts MM2 the ordinary way.** A lobby launch
+that fails leaves the player with no game and with the two steps: the window
+names the reason, names the address, and names the launch button. The reason is
+the reason of the split itself — the ordinary start covers the screen, and the
+player must read the address first.
+
+**The third button earns its place.** Before any start it is the second step of
+the fallback, and it reads **Start the race** for the host or **Start the game**
+for a player who joins. After any start it reads **Start the game again**, and
+that is the one job that is left: MM2 stops, and the player starts it again
+without a new **Host**, which would cost him his place in the lobby.
+
 #### The window chooses the path, and the steps follow the path
 
 The launch button takes one of two paths. The window takes the lobby path when
@@ -582,6 +646,10 @@ These are the failures the group will actually meet.
 | Failure | What the app does |
 |---|---|
 | ZeroTier is not running | `PreflightCheck` blocks the lobby and offers to start the service |
+| ZeroTier stops after the checks ran | `LobbyService.Reach` says `NoAnswer`. **The window names that state, and it never says that nobody hosts.** It takes Host, Join and the launch button away, and it tells the player to start the ZeroTier One service in the Services list of Windows. The next cycle finds the network again, so the buttons come back without a press |
+| This computer holds no address on the network | `Reach` says `NoAddress`. The window names that state, takes the same three buttons away, and sends the player to **Check again** and the ZeroTier row. One cause of this state is a configuration that ZeroTier is still asking for, so the row is the one place that can name the reason |
+| No lobby service runs | The window says that it has not started the lobby and names **Check again**. It said "No one hosts a race now." here too, which it could not know |
+| A press of Host or Join that cannot reach the race | **The window starts no game.** It announces the player, names the reason and the step of `LobbyLaunchMessages`, shows the address, and names the launch button. The player reads the address before MM2 covers the screen, which is the whole reason that the two steps exist |
 | A friend is online but their app is not running | Show the remembered name and "app not running", which the user must be able to tell apart from "offline" |
 | DirectPlay is turned off | `PreflightCheck` blocks and runs the `dism` command |
 | The firewall blocks the game | `PreflightCheck` adds the rule before the player ever starts MM2 |
@@ -595,7 +663,7 @@ These are the failures the group will actually meet.
 | Two players claim the host role | Both appear as hosting. The group sorts it out in Discord. The app does not arbitrate |
 | The lobby launch fails for any reason | **The window starts the game the ordinary way**, shows the address, and shows the three steps. The status line names the game first, then the reason and the step that `LobbyLaunchMessages` gives. A panel holds the trail of the DirectPlay calls, which the player can send to the person who runs the group. No player is worse off than he was before the lobby path existed |
 | The lobby launch never opens | The advisory checks did not pass, or `CanLaunch` answers false. **The window says nothing about the lobby path** and starts the game the ordinary way. An advisory row already names its own reason and offers the **Fix**, and a second message would say it twice |
-| The player presses the launch button again | The window starts a game every time. It disposes the session that it holds first, and it takes a new session only when the old one closed. So the window holds one session and never more |
+| The player presses the launch button again | The window starts a game every time, and the label of the button reads **Start the game again** after the first start. It disposes the session that it holds first, and it takes a new session only when the old one closed. So the window holds one session and never more |
 
 ## 8. Testing
 

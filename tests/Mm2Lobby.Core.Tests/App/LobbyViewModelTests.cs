@@ -128,6 +128,20 @@ public class LobbyViewModelTests : IDisposable
         return new LobbyViewModel(_environment, _host);
     }
 
+    /// <summary>The ZeroTier client of the environment.</summary>
+    private FakeZeroTierClient TheZeroTier => (FakeZeroTierClient)_environment.ZeroTier;
+
+    /// <summary>
+    /// Stops ZeroTier, as the owner stopped it, and runs one cycle. The client
+    /// answers null for every failure, so both answers go to null together.
+    /// </summary>
+    private async Task ZeroTierStopsAsync()
+    {
+        TheZeroTier.Status = null;
+        TheZeroTier.Network = null;
+        await _environment.Lobbies[^1].RunCycleAsync(default);
+    }
+
     /// <summary>Delivers one announcement to the transport of the running lobby.</summary>
     private void DeliverPeer(
         string nodeId = "bb11223344",
@@ -316,9 +330,10 @@ public class LobbyViewModelTests : IDisposable
     [Fact]
     public async Task The_window_does_not_ask_for_an_address_that_it_lacks()
     {
-        // MyAddress is null until a cycle reads the ZeroTier network.
+        // The app holds no address on the network, so it announces nothing.
+        // The window therefore offers no race and it names no address.
         AddCheck("ZeroTier");
-        ((FakeZeroTierClient)_environment.ZeroTier).Network = null;
+        TheZeroTier.Network = null;
 
         await using var model = Build();
         await model.StartAsync();
@@ -327,11 +342,13 @@ public class LobbyViewModelTests : IDisposable
 
         Assert.Equal(string.Empty, model.HostAddress);
         Assert.DoesNotContain("Give the address", model.HostTitle);
-        Assert.Contains("You host this race", model.HostTitle);
+        Assert.Contains("no address on the ZeroTier network", model.HostTitle);
 
-        // A cycle fills the address in. The player must know that waiting is
-        // the whole of the work.
-        Assert.Contains("Wait", model.HostTitle);
+        // The window said "You host this race" here until the review of this
+        // state. No friend could hear that race, and the app knew it.
+        Assert.DoesNotContain("You host this race", model.HostTitle);
+        Assert.False(model.CanHost);
+        Assert.False(_environment.Lobbies[0].IsHosting);
     }
 
     [Fact]
@@ -1361,7 +1378,11 @@ public class LobbyViewModelTests : IDisposable
         Assert.False(model.CanHost);
         Assert.False(model.CanJoin);
 
-        // Check again is the way back.
+        // Check again is the way back. This computer must also hold an address
+        // on the new network: the app announces that address, so without it
+        // Host stays off and the window names the reason.
+        TheZeroTier.Network = new ZeroTierNetwork(
+            "8056c2e21c000001", "OK", IPAddress.Parse("10.147.17.42"), 24);
         await model.CheckAgainAsync();
 
         Assert.True(model.CanHost);
@@ -1506,7 +1527,7 @@ public class LobbyViewModelTests : IDisposable
     // --- The lobby launch ---------------------------------------------------
 
     [Fact]
-    public async Task The_launch_button_asks_the_lobby_to_start_the_race_for_the_host()
+    public async Task The_press_of_Host_asks_the_lobby_to_start_the_race()
     {
         OpenTheLobbyPath();
 
@@ -1514,7 +1535,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
 
         var request = Assert.Single(_environment.Launcher.Requests);
         Assert.Equal(LobbyRole.Host, request.Role);
@@ -1522,7 +1542,7 @@ public class LobbyViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task The_launch_button_asks_the_lobby_to_join_the_address_that_the_app_knows()
+    public async Task The_press_of_Join_asks_the_lobby_for_the_address_that_the_app_knows()
     {
         // The app reads the address from the announcement of the host. So a
         // player who joins types no address at any point.
@@ -1535,7 +1555,6 @@ public class LobbyViewModelTests : IDisposable
         await _environment.Lobbies[0].RunCycleAsync(default);
 
         await model.JoinAsync();
-        model.StartGame();
 
         var request = Assert.Single(_environment.Launcher.Requests);
         Assert.Equal(LobbyRole.Join, request.Role);
@@ -1552,7 +1571,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
 
         Assert.Equal("dallin", Assert.Single(_environment.Launcher.Requests).PlayerName);
     }
@@ -1568,7 +1586,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
 
         Assert.Empty(_environment.LaunchedPaths);
     }
@@ -1585,7 +1602,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
 
         Assert.Equal("MM2 Lobby started the game in the race.", model.StatusMessage);
     }
@@ -1599,7 +1615,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
 
         Assert.Equal(JoinInstructions.ForTheHostInTheRace(), model.JoinSteps);
     }
@@ -1616,7 +1631,6 @@ public class LobbyViewModelTests : IDisposable
         await _environment.Lobbies[0].RunCycleAsync(default);
 
         await model.JoinAsync();
-        model.StartGame();
 
         Assert.Equal(JoinInstructions.ForThePlayerInTheRace(), model.JoinSteps);
     }
@@ -1636,7 +1650,6 @@ public class LobbyViewModelTests : IDisposable
         await _environment.Lobbies[0].RunCycleAsync(default);
 
         await model.JoinAsync();
-        model.StartGame();
 
         Assert.NotEmpty(model.JoinSteps);
         Assert.DoesNotContain(model.JoinSteps, step => step.Contains("10.147.17.50"));
@@ -1655,7 +1668,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
 
         _host.Tick();
         _host.Tick();
@@ -1674,7 +1686,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
 
         // The refresh reads the state again. The address must survive it.
         _host.Tick();
@@ -1792,11 +1803,11 @@ public class LobbyViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task A_second_press_of_Join_takes_the_steps_of_the_race_away()
+    public async Task A_second_press_of_Join_puts_the_game_in_the_race_again()
     {
-        // The player announced himself again, and he has not pressed the
-        // launch button since. The window must ask nothing of him that it
-        // cannot prove, and it must not wait two seconds to stop asking.
+        // One press plays, and that holds for every press. This test read the
+        // ordinary steps before the collapse of the two steps, because the
+        // second press of Join announced the player and started no game.
         OpenTheLobbyPath();
 
         await using var model = Build();
@@ -1806,10 +1817,15 @@ public class LobbyViewModelTests : IDisposable
         await _environment.Lobbies[0].RunCycleAsync(default);
 
         await model.JoinAsync();
-        model.StartGame();
         await model.JoinAsync();
 
-        Assert.Equal(JoinInstructions.For("10.147.17.50"), model.JoinSteps);
+        Assert.Equal(2, _environment.Launcher.Requests.Count);
+        Assert.Equal(JoinInstructions.ForThePlayerInTheRace(), model.JoinSteps);
+
+        // One session, because one game runs.
+        Assert.Equal(2, _environment.Launcher.Sessions.Count);
+        Assert.False(_environment.Launcher.Sessions[0].IsOpen);
+        Assert.True(_environment.Launcher.Sessions[1].IsOpen);
     }
 
     [Fact]
@@ -1861,7 +1877,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
 
         var session = Assert.Single(_environment.Launcher.Sessions);
         Assert.True(session.IsOpen);
@@ -1877,7 +1892,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
         await model.DisposeAsync();
 
         Assert.False(Assert.Single(_environment.Launcher.Sessions).IsOpen);
@@ -1894,7 +1908,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
         model.StartGame();
 
         Assert.Equal(2, _environment.Launcher.Sessions.Count);
@@ -1936,7 +1949,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
 
         _environment.Launcher.Sessions[0].GameRuns = true;
         model.StartGame();
@@ -1956,7 +1968,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
 
         _environment.Launcher.Sessions[0].GameRuns = true;
         model.StartGame();
@@ -2005,7 +2016,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
         await model.HostAsync();
 
         Assert.Empty(model.JoinSteps);
@@ -2020,7 +2030,6 @@ public class LobbyViewModelTests : IDisposable
         await model.StartAsync();
 
         await model.HostAsync();
-        model.StartGame();
         await model.CheckAgainAsync();
 
         Assert.Empty(model.JoinSteps);
@@ -2038,7 +2047,6 @@ public class LobbyViewModelTests : IDisposable
         await _environment.Lobbies[0].RunCycleAsync(default);
 
         await model.JoinAsync();
-        model.StartGame();
 
         Assert.Equal(JoinInstructions.ForThePlayerInTheRace(), model.JoinSteps);
 
@@ -2048,12 +2056,32 @@ public class LobbyViewModelTests : IDisposable
         Assert.Empty(model.JoinSteps);
     }
 
+    // --- One press plays ----------------------------------------------------
+
     [Fact]
-    public async Task Host_after_a_lobby_launch_as_a_player_who_joined_takes_the_race_steps_away()
+    public async Task One_press_of_Host_puts_the_game_in_the_race()
     {
-        // The player joined through the lobby, and he then took the host role.
-        // He must press the launch button again, and the window must ask
-        // nothing of him until he does.
+        // The split between the announcement and the launch existed so that
+        // the host could read his address before MM2 covered the screen. The
+        // lobby launch gives the address to the game, so that reason is gone.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        var request = Assert.Single(_environment.Launcher.Requests);
+        Assert.Equal(LobbyRole.Host, request.Role);
+        Assert.True(_environment.Lobbies[0].IsHosting);
+        Assert.Equal("MM2 Lobby started the game in the race.", model.StatusMessage);
+        Assert.Equal(JoinInstructions.ForTheHostInTheRace(), model.JoinSteps);
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task One_press_of_Join_puts_the_game_in_the_race_of_the_host()
+    {
         OpenTheLobbyPath();
 
         await using var model = Build();
@@ -2063,9 +2091,650 @@ public class LobbyViewModelTests : IDisposable
         await _environment.Lobbies[0].RunCycleAsync(default);
 
         await model.JoinAsync();
+
+        var request = Assert.Single(_environment.Launcher.Requests);
+        Assert.Equal(LobbyRole.Join, request.Role);
+        Assert.Equal("10.147.17.50", request.HostAddress);
+        Assert.Equal("MM2 Lobby started the game in the race.", model.StatusMessage);
+        Assert.Equal(JoinInstructions.ForThePlayerInTheRace(), model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task One_press_of_Host_still_copies_the_address()
+    {
+        // A friend whose own lobby path is shut still needs the address.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.Equal("10.147.17.42", Assert.Single(_host.CopiedText));
+    }
+
+    [Fact]
+    public async Task Host_names_the_game_that_one_press_starts()
+    {
+        // A label must promise what the press will do. This press starts the
+        // game, so the label says so.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Equal("Host a race and start the game", model.HostButtonText);
+    }
+
+    [Fact]
+    public async Task Join_names_the_game_that_one_press_starts()
+    {
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.Equal("Join the host and start the game", model.JoinButtonText);
+    }
+
+    [Fact]
+    public async Task Host_names_the_race_alone_while_the_lobby_path_is_shut()
+    {
+        // This press announces the race and starts no game, and the label
+        // promises nothing more.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Equal("Host a race", model.HostButtonText);
+    }
+
+    [Fact]
+    public async Task Join_names_the_host_alone_while_the_lobby_path_is_shut()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.Equal("Join the host", model.JoinButtonText);
+    }
+
+    [Fact]
+    public async Task Host_offers_to_stop_the_race_after_one_press_that_played()
+    {
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.Equal("Stop the race", model.HostButtonText);
+    }
+
+    [Fact]
+    public async Task The_launch_button_offers_a_second_start_after_a_press_that_played()
+    {
+        // The game of this player runs. The button is no step of the race any
+        // more, and it names the one thing that it still does.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.True(model.CanStartGame);
+        Assert.Equal("Start the game again", model.StartGameButtonText);
+    }
+
+    [Fact]
+    public async Task The_launch_button_offers_a_second_start_after_an_ordinary_start()
+    {
+        // The label follows the game and not the path. A game started, so a
+        // press of this button starts it again.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.Equal("Start the race", model.StartGameButtonText);
+
         model.StartGame();
+
+        Assert.Equal("Start the game again", model.StartGameButtonText);
+    }
+
+    [Fact]
+    public async Task The_launch_button_puts_the_game_in_the_race_again_after_MM2_stops()
+    {
+        // MM2 is flaky. The owner must start it again without a new Host,
+        // because a new Host would cost him his place in the lobby.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Equal(2, _environment.Launcher.Requests.Count);
+        Assert.Equal(2, _environment.Launcher.Sessions.Count);
+        Assert.False(_environment.Launcher.Sessions[0].IsOpen);
+        Assert.True(_environment.Launcher.Sessions[1].IsOpen);
+        Assert.True(_environment.Lobbies[0].IsHosting);
+        Assert.Equal("MM2 Lobby started the game in the race.", model.StatusMessage);
+    }
+
+    [Fact]
+    public async Task A_press_of_Host_that_reaches_no_race_starts_no_game()
+    {
+        // MM2 covers the whole screen. The player must read the address before
+        // that, and this press cannot give him the race. So it gives him no
+        // game either, and the launch button stays as the second step.
+        OpenTheLobbyPath();
+        _environment.Launcher.Fails(LobbyLaunchFault.DirectPlayRefused);
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.Single(_environment.Launcher.Requests);
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task A_press_of_Host_that_reaches_no_race_names_the_reason_and_the_button()
+    {
+        OpenTheLobbyPath();
+        _environment.Launcher.Fails(LobbyLaunchFault.GameNotRegistered);
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        var advice = LobbyLaunchMessages.For(LobbyLaunchFault.GameNotRegistered);
+
+        Assert.StartsWith(
+            "MM2 Lobby did not start the game in the race.", model.StatusMessage);
+        Assert.Contains(advice.Message, model.StatusMessage);
+        Assert.Contains(advice.PlayerAction, model.StatusMessage);
+
+        // The message names the button that gives the player his game, and it
+        // names it with the label that the button carries now.
+        Assert.Contains("Read the address above.", model.StatusMessage);
+        Assert.Contains("Then choose Start the race.", model.StatusMessage);
+        Assert.Equal("Start the race", model.StartGameButtonText);
+    }
+
+    [Fact]
+    public async Task A_press_of_Host_that_reaches_no_race_keeps_the_two_steps()
+    {
+        OpenTheLobbyPath();
+        _environment.Launcher.Fails(LobbyLaunchFault.DirectPlayRefused);
+
+        await using var model = Build();
+        await model.StartAsync();
+
         await model.HostAsync();
 
         Assert.Equal(JoinInstructions.ForHost(), model.JoinSteps);
+        Assert.Equal("10.147.17.42", model.HostAddress);
+    }
+
+    [Fact]
+    public async Task A_press_of_Join_that_reaches_no_race_keeps_the_two_steps()
+    {
+        // This player reads the address of the host, and then he starts the
+        // game himself. That is the whole reason that the two steps exist.
+        OpenTheLobbyPath();
+        _environment.Launcher.Fails(LobbyLaunchFault.DirectPlayRefused);
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+
+        Assert.Empty(_environment.LaunchedPaths);
+        Assert.Equal(JoinInstructions.For("10.147.17.50"), model.JoinSteps);
+        Assert.Equal("10.147.17.50", model.HostAddress);
+        Assert.Contains("Then choose Start the game.", model.StatusMessage);
+        Assert.Equal("Start the game", model.StartGameButtonText);
+    }
+
+    [Fact]
+    public async Task The_launch_button_gives_the_game_after_a_press_that_reached_no_race()
+    {
+        // The second step of the fallback. The player read the address, and
+        // this press gives him the game that the first press did not give.
+        OpenTheLobbyPath();
+        _environment.Launcher.Fails(LobbyLaunchFault.DirectPlayRefused);
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        model.StartGame();
+
+        Assert.Equal(@"C:\Games\MM2\midtown2.exe", Assert.Single(_environment.LaunchedPaths));
+        Assert.StartsWith("MM2 started. Follow the steps above.", model.StatusMessage);
+        Assert.Equal(JoinInstructions.ForHost(), model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task The_two_steps_stay_while_the_lobby_path_is_shut()
+    {
+        // A 64 bit copy of the app, or an advisory check that did not pass.
+        // The player reads the address, and then he starts the game.
+        OpenTheLobbyPath();
+        _environment.Launcher.CanLaunch = false;
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Equal("Host a race", model.HostButtonText);
+
+        await model.HostAsync();
+
+        Assert.Empty(_environment.LaunchedPaths);
+        Assert.Equal("Start the race", model.StartGameButtonText);
+        Assert.Equal(JoinInstructions.ForHost(), model.JoinSteps);
+
+        // The press of Host says nothing about a path that the app never
+        // tried, as it said nothing before this collapse.
+        Assert.Equal(string.Empty, model.StatusMessage);
+
+        model.StartGame();
+
+        Assert.Single(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task The_two_steps_stay_while_an_advisory_check_does_not_pass()
+    {
+        OpenTheLobbyPath().Status = CheckStatus.Fail;
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        // The row of that check names the reason and offers the Fix. So the
+        // label promises no game, and the press starts none.
+        Assert.Equal("Host a race", model.HostButtonText);
+
+        await model.HostAsync();
+
+        Assert.Empty(_environment.Launcher.Requests);
+        Assert.Empty(_environment.LaunchedPaths);
+        Assert.Equal(JoinInstructions.ForHost(), model.JoinSteps);
+    }
+
+    // --- What the app can reach --------------------------------------------
+
+    [Fact]
+    public async Task The_window_says_that_it_cannot_reach_ZeroTier()
+    {
+        // The owner met this state. The window said "No one hosts a race now."
+        // That sentence sent him to look for a friend who hosts, and the fault
+        // was his own ZeroTier.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await ZeroTierStopsAsync();
+
+        Assert.Equal(
+            "The app cannot reach ZeroTier. It sees no player, and it announces no race. "
+                + "Start the ZeroTier One service in the Services list of Windows. "
+                + "The app then finds the network again.",
+            model.HostTitle);
+    }
+
+    [Fact]
+    public async Task The_window_never_says_that_no_one_hosts_while_it_cannot_reach_ZeroTier()
+    {
+        // "No one hosts a race now." is a different fact, and the app cannot
+        // see whether it holds.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await ZeroTierStopsAsync();
+
+        Assert.DoesNotContain("No one hosts", model.HostTitle);
+    }
+
+    [Fact]
+    public async Task The_window_says_that_this_computer_has_no_address_on_the_network()
+    {
+        // ZeroTier answers, and this computer holds no address. The app
+        // announces nothing in this state too, and the reason is another one.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        TheZeroTier.Network = null;
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.Equal(
+            "This computer has no address on the ZeroTier network. "
+                + "The app sees no player, and it announces no race. "
+                + "Choose Check again in the Setup list above. "
+                + "The ZeroTier row then names the reason and the fix.",
+            model.HostTitle);
+        Assert.DoesNotContain("No one hosts", model.HostTitle);
+    }
+
+    [Fact]
+    public async Task The_window_says_that_no_one_hosts_only_while_it_is_on_the_network()
+    {
+        // This is the one state that the old sentence described. The app
+        // announces itself, it hears every friend, and no friend hosts.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Equal("No one hosts a race now.", model.HostTitle);
+    }
+
+    [Fact]
+    public async Task The_window_says_that_it_has_not_started_the_lobby()
+    {
+        // A check that blocks did not pass, so no service runs. The app sees
+        // nobody here as well, and it must not say that nobody hosts.
+        AddCheck("ZeroTier", CheckStatus.Fail);
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Equal(
+            "The app has not started the lobby. It sees no player, and it announces no race. "
+                + "Choose Check again in the Setup list above.",
+            model.HostTitle);
+        Assert.DoesNotContain("No one hosts", model.HostTitle);
+    }
+
+    [Fact]
+    public async Task Check_again_that_fails_takes_the_title_of_the_old_lobby_away()
+    {
+        // The service of that title is gone. A title that stays asserts a
+        // state that the app left, and this is the same defect in another
+        // place: one mutation of the no-lobby sentence found it.
+        var check = AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Equal("No one hosts a race now.", model.HostTitle);
+
+        check.Status = CheckStatus.Fail;
+        await model.CheckAgainAsync();
+
+        Assert.DoesNotContain("No one hosts", model.HostTitle);
+        Assert.Equal(
+            "The app has not started the lobby. It sees no player, and it announces no race. "
+                + "Choose Check again in the Setup list above.",
+            model.HostTitle);
+    }
+
+    [Fact]
+    public async Task A_start_that_fails_says_that_the_app_has_not_started_the_lobby()
+    {
+        // Every check passed, and the transport refused the port. So no row
+        // names the reason, and only the status line holds it.
+        AddCheck("ZeroTier");
+        _environment.CreateTransport = () => new FailingTransport();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.DoesNotContain("No one hosts", model.HostTitle);
+        Assert.Contains("The app has not started the lobby.", model.HostTitle);
+        Assert.Contains("the port is busy", model.StatusMessage);
+    }
+
+    [Fact]
+    public async Task The_window_says_nothing_about_a_host_before_the_first_check()
+    {
+        // The window opens before StartAsync runs. It has read nothing at that
+        // point, so it must assert nothing.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+
+        Assert.DoesNotContain("No one hosts", model.HostTitle);
+    }
+
+    [Fact]
+    public async Task Host_and_Join_go_off_while_the_app_cannot_reach_ZeroTier()
+    {
+        // This is the ruling of the review. Hosting announces nothing and
+        // joining reaches nobody, so the window offers neither.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.True(model.CanHost);
+        Assert.True(model.CanJoin);
+
+        await ZeroTierStopsAsync();
+
+        Assert.False(model.CanHost);
+        Assert.False(model.CanJoin);
+    }
+
+    [Fact]
+    public async Task Host_and_Join_go_off_while_this_computer_has_no_address()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        TheZeroTier.Network = null;
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.False(model.CanHost);
+        Assert.False(model.CanJoin);
+    }
+
+    [Fact]
+    public async Task Host_and_Join_come_back_after_ZeroTier_starts_again()
+    {
+        // The service reads ZeroTier every two seconds, so the player chooses
+        // no button to come back. The title promises exactly this.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await ZeroTierStopsAsync();
+
+        Assert.False(model.CanHost);
+
+        TheZeroTier.Status = new ZeroTierStatus(true, "a09acf0233");
+        TheZeroTier.Network = new ZeroTierNetwork(
+            "0123456789abcdef", "OK", IPAddress.Parse("10.147.17.42"), 24);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.True(model.CanHost);
+        Assert.Equal("No one hosts a race now.", model.HostTitle);
+    }
+
+    [Fact]
+    public async Task A_press_of_Host_announces_nothing_while_the_app_cannot_reach_ZeroTier()
+    {
+        // The button carries the gate of the window, because a click can
+        // arrive after the state changed.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await ZeroTierStopsAsync();
+        await model.HostAsync();
+
+        Assert.False(_environment.Lobbies[0].IsHosting);
+    }
+
+    [Fact]
+    public async Task A_press_of_Join_takes_no_role_while_the_app_cannot_reach_ZeroTier()
+    {
+        // The app cannot reach that address. This press therefore copies
+        // nothing, takes no role, and starts no game.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await ZeroTierStopsAsync();
+        await model.JoinAsync();
+
+        Assert.Empty(_host.CopiedText);
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task The_player_can_stop_a_race_while_the_app_cannot_reach_ZeroTier()
+    {
+        // The stop needs no network, and a player who cannot stop his own race
+        // keeps a row that promises a race to nobody.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        await ZeroTierStopsAsync();
+
+        Assert.True(model.CanHost);
+        Assert.Equal("Stop the race", model.HostButtonText);
+
+        await model.HostAsync();
+
+        Assert.False(_environment.Lobbies[0].IsHosting);
+    }
+
+    [Fact]
+    public async Task The_launch_button_goes_off_while_the_app_cannot_reach_ZeroTier()
+    {
+        // A game on a network that the app cannot reach races against nobody.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.True(model.CanStartGame);
+
+        await ZeroTierStopsAsync();
+
+        Assert.False(model.CanStartGame);
+    }
+
+    [Fact]
+    public async Task A_press_of_the_launch_button_starts_no_game_while_ZeroTier_is_away()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+        await ZeroTierStopsAsync();
+        model.StartGame();
+
+        Assert.Empty(_environment.LaunchedPaths);
+    }
+
+    [Fact]
+    public async Task The_window_shows_no_address_while_the_app_cannot_reach_ZeroTier()
+    {
+        // The address of that host belongs to a race that the app can no
+        // longer see.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        Assert.Equal("10.147.17.50", model.HostAddress);
+
+        await ZeroTierStopsAsync();
+
+        Assert.Equal(string.Empty, model.HostAddress);
+        Assert.False(model.HasHostAddress);
+    }
+
+    [Fact]
+    public async Task The_window_shows_no_step_while_the_app_cannot_reach_ZeroTier()
+    {
+        // Every step names an action inside a race. The app cannot promise a
+        // race here, so it asks for nothing.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        await model.HostAsync();
+
+        Assert.NotEmpty(model.JoinSteps);
+
+        await ZeroTierStopsAsync();
+
+        Assert.Empty(model.JoinSteps);
+    }
+
+    [Fact]
+    public async Task Host_after_a_press_of_Join_takes_the_steps_of_the_host_in_the_race()
+    {
+        // The player joined through the lobby, and he then took the host role.
+        // That press plays again, so the steps must follow the new role: the
+        // two lists of the race differ, and a window that kept the path of the
+        // last press would tell this player to wait for a host.
+        OpenTheLobbyPath();
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer(hosting: true);
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.JoinAsync();
+        await model.HostAsync();
+
+        Assert.Equal(LobbyRole.Host, _environment.Launcher.Requests[^1].Role);
+        Assert.Equal(JoinInstructions.ForTheHostInTheRace(), model.JoinSteps);
     }
 }

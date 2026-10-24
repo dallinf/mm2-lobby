@@ -88,6 +88,22 @@ public sealed class LobbyService : IAsyncDisposable
     public string DisplayName => _config.DisplayName;
 
     /// <summary>
+    /// What the last cycle learned about ZeroTier. The value starts at
+    /// NoAnswer, because the service has read nothing before its first cycle.
+    /// </summary>
+    /// <remarks>
+    /// AnnounceAsync sends nothing while this property is not OnTheNetwork, and
+    /// it throws nothing, so LastCycleFault stays null. This property is
+    /// therefore the only record of that silence. The window reads it, names
+    /// the state, and takes Host and Join away, because an announcement that
+    /// nobody receives gives the player no race.
+    ///
+    /// A cycle that throws leaves the value of the last cycle that completed,
+    /// and LastCycleFault then names the exception.
+    /// </remarks>
+    public ZeroTierReach Reach { get; private set; }
+
+    /// <summary>
     /// The exception from the last cycle that the pump ran. This property is
     /// null when that cycle completed. Mm2Lobby.Core has no logger, so this
     /// property holds the only record of a failed cycle.
@@ -142,6 +158,11 @@ public sealed class LobbyService : IAsyncDisposable
             _status = await _zeroTier.GetStatusAsync(ct);
             _network = await _zeroTier.GetNetworkAsync(_config.ZeroTierNetworkId, ct);
 
+            // The reach follows the two reads above, and AnnounceAsync below
+            // reads the same two values. So the window cannot show a reach that
+            // disagrees with the silence of this cycle.
+            Reach = TheReach(_status, _network);
+
             await AnnounceAsync(ct);
 
             Peers = await _directory.GetPeersAsync(
@@ -170,6 +191,20 @@ public sealed class LobbyService : IAsyncDisposable
     public void StartHosting() => Volatile.Write(ref _hostingSince, _clock().UtcTicks);
 
     public void StopHosting() => Volatile.Write(ref _hostingSince, 0);
+
+    /// <summary>
+    /// Reads the two answers of ZeroTier and names the state. The conditions
+    /// are the conditions of the first line of AnnounceAsync, in the same
+    /// order.
+    /// </summary>
+    private static ZeroTierReach TheReach(ZeroTierStatus? status, ZeroTierNetwork? network)
+    {
+        if (status is null) return ZeroTierReach.NoAnswer;
+
+        return network?.Address is null
+            ? ZeroTierReach.NoAddress
+            : ZeroTierReach.OnTheNetwork;
+    }
 
     private async Task AnnounceAsync(CancellationToken ct)
     {
