@@ -50,7 +50,14 @@
        covers the screen. The list of peers gives that height, because the
        list holds the star row. The cap of the Setup panel does not move,
        because that panel is shut by then: every check passed, or the player
-       read the rows and pressed the button all the same. -->
+       read the rows and pressed the button all the same.
+
+       The line that names the file of the report stands below that panel, and
+       it takes about 36 more: the path is long, so the line wraps. The list
+       of peers gives that height as well, for the reason above, and the cap
+       of the Setup panel therefore does not move. I measured no new number on
+       macOS for this line. -->
+
 
   <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto">
 
@@ -206,6 +213,16 @@
           <SelectableTextBlock Text="{Binding LaunchReport}" TextWrapping="Wrap" />
         </ScrollViewer>
       </Expander>
+
+      <!-- Where the player finds the file. The app writes the report of the
+           session when the window closes, and the player sends that file to
+           the person who runs the group.
+
+           This line also names a report that the last close could not write.
+           The window is gone at the moment of that failure, so no line of it
+           reaches the player then. -->
+      <SelectableTextBlock Text="{Binding ReportMessage}" TextWrapping="Wrap"
+                           Foreground="Gray" Margin="0,4,0,0" />
 
       <!-- Host and Join announce the player, and on the lobby path each of
            them also starts the game in the race. The third button starts MM2.

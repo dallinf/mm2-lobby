@@ -577,11 +577,28 @@ One file at `%APPDATA%\Mm2Lobby\config.json`.
   "displayName": "dallin",
   "gamePath": "C:\\Program Files (x86)\\Microsoft Games\\Midtown Madness 2\\midtown2.exe",
   "zeroTierNetworkId": "0123456789abcdef",
+  "lastReportFault": "",
   "rememberedNames": { "bb11223344": "chris" }
 }
 ```
 
 `displayName` defaults to the Windows computer name.
+
+`lastReportFault` holds the reason that the app could not write the report
+file when it last closed, and an empty text after a write that worked. The app
+writes that report while the window closes, so no line of the window reaches
+the player at that moment. The window shows the reason at the next start. A
+missing value loads an empty text, so the file of an older version still
+loads.
+
+**One report file at `%APPDATA%\Mm2Lobby\report.txt`.** The app writes it when
+the player closes the window, and each write overwrites the report of the last
+session, so the folder does not grow. The file holds what the window showed:
+the time, the version of the app, the setup rows, the network, the race, the
+list of players, the last message, and the trail of the last launch. It holds
+nothing that the window does not show, and the app never reads the
+authentication token of ZeroTier. The window names the path of the file in one
+line, because the player sends that file to the person who runs the group.
 
 **The window owns the configuration object, and it is the only owner.** It loads
 one `AppConfig`, passes that instance to `LobbyService`, and hands the same

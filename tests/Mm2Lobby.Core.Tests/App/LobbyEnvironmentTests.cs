@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.Time.Testing;
 using Mm2Lobby.App;
 using Mm2Lobby.Core.Configuration;
+using Mm2Lobby.Core.Diagnostics;
 using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
@@ -93,6 +94,7 @@ public class LobbyEnvironmentTests : IDisposable
 
     private LobbyEnvironment BuildFromTheFile(TimeProvider? timeProvider) => new(
         Store,
+        new ReportStore(Path.Combine(_folder, "report.txt")),
         _zeroTier,
         _zeroTierCommand,
         () => _accountId,

@@ -2737,4 +2737,181 @@ public class LobbyViewModelTests : IDisposable
         Assert.Equal(LobbyRole.Host, _environment.Launcher.Requests[^1].Role);
         Assert.Equal(JoinInstructions.ForTheHostInTheRace(), model.JoinSteps);
     }
+
+    // --- The report that the close writes ---------------------------------
+
+    /// <summary>The network ID that the window already holds.</summary>
+    private string TheNetworkId => _environment.Config.ZeroTierNetworkId;
+
+    [Fact]
+    public async Task The_close_takes_the_text_of_the_two_boxes()
+    {
+        // Each binding writes when the box loses the focus, and a player who
+        // types and then closes the window never gives it that focus.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.OnTheWindowClosing("chris", "ffffffffffffffff");
+
+        Assert.Equal("chris", _environment.Config.DisplayName);
+        Assert.Equal("ffffffffffffffff", _environment.Config.ZeroTierNetworkId);
+        Assert.Equal("chris", _environment.ConfigStore.Load().DisplayName);
+    }
+
+    [Fact]
+    public async Task The_close_writes_the_report_of_the_window()
+    {
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.OnTheWindowClosing("me", TheNetworkId);
+
+        var report = Assert.Single(_environment.Reports);
+        Assert.Contains("App version: 1.0.0.0", report);
+        Assert.Contains("ZeroTier | OK | The check passes.", report);
+    }
+
+    [Fact]
+    public async Task The_close_writes_the_name_to_the_file_before_the_report()
+    {
+        // The name of the player is the one thing that the close must not
+        // lose, so the save of that name goes first. The fake reads the file
+        // at the moment of the write of the report.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.OnTheWindowClosing("chris", TheNetworkId);
+
+        Assert.Equal("chris", Assert.Single(_environment.NameInTheFileAtTheWrite));
+    }
+
+    [Fact]
+    public async Task A_report_that_fails_does_not_stop_the_close()
+    {
+        // The app closes in every case, and the player keeps the name that he
+        // typed. The type below is not IOException, so the view model must
+        // catch every type here.
+        AddCheck("ZeroTier");
+        _environment.ReportFault = new InvalidOperationException("the report broke");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Null(Record.Exception(() => model.OnTheWindowClosing("chris", TheNetworkId)));
+        Assert.Equal("chris", _environment.ConfigStore.Load().DisplayName);
+    }
+
+    [Fact]
+    public async Task A_report_that_fails_reaches_the_file_of_the_configuration()
+    {
+        // The window closes at that moment, so no line of the window reaches
+        // the player then. The file carries the reason to the next start.
+        AddCheck("ZeroTier");
+        _environment.ReportFault = new IOException("another program holds the file");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.OnTheWindowClosing("me", TheNetworkId);
+
+        Assert.Contains(
+            "another program holds the file",
+            _environment.ConfigStore.Load().LastReportFault);
+    }
+
+    [Fact]
+    public async Task The_window_names_a_report_that_the_last_close_did_not_write()
+    {
+        AddCheck("ZeroTier");
+        _environment.Config.LastReportFault = "another program holds the file";
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Contains("did not write the report", model.ReportMessage);
+        Assert.Contains("another program holds the file", model.ReportMessage);
+    }
+
+    [Fact]
+    public async Task A_report_that_works_takes_the_fault_of_the_last_close_away()
+    {
+        // A line that names a failure of last week is a lie after a write
+        // that worked.
+        AddCheck("ZeroTier");
+        _environment.Config.LastReportFault = "another program holds the file";
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        model.OnTheWindowClosing("me", TheNetworkId);
+
+        Assert.Equal(string.Empty, _environment.Config.LastReportFault);
+        Assert.Equal(string.Empty, _environment.ConfigStore.Load().LastReportFault);
+    }
+
+    [Fact]
+    public async Task The_window_shows_the_path_of_the_report()
+    {
+        // The player sends the file, so the player must find the file.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        Assert.Contains(_environment.ReportPath, model.ReportMessage);
+    }
+
+    [Fact]
+    public async Task The_report_holds_the_state_of_the_window_and_the_trail_of_the_launch()
+    {
+        // A trail of DirectPlay calls with no state around it is hard to
+        // read. So the report carries what the window shows beside it.
+        OpenTheLobbyPath();
+        _environment.Launcher.Detail = "CoInitializeEx answered 0x00000000.";
+        TheZeroTier.Quality["bb11223344"] = LinkQuality.Direct;
+
+        await using var model = Build();
+        await model.StartAsync();
+
+        DeliverPeer();
+        await _environment.Lobbies[0].RunCycleAsync(default);
+
+        await model.HostAsync();
+
+        model.OnTheWindowClosing("me", TheNetworkId);
+
+        var report = Assert.Single(_environment.Reports);
+
+        Assert.Contains("Time: 2026-10-22 12:00:00 +00:00", report);
+        Assert.Contains("The app can start the game in the race: yes", report);
+        Assert.Contains("The network: The app is on the network.", report);
+        Assert.Contains("Address: 10.147.17.42", report);
+        Assert.Contains("chris | In the lobby | 10.147.17.50 | Direct", report);
+        Assert.Contains("Status: MM2 Lobby started the game in the race.", report);
+        Assert.Contains("CoInitializeEx answered 0x00000000.", report);
+    }
+
+    [Fact]
+    public async Task The_report_names_the_state_that_the_app_cannot_race_in()
+    {
+        // The report must not say that the app was on the network while the
+        // app could not reach ZeroTier.
+        AddCheck("ZeroTier");
+
+        await using var model = Build();
+        await model.StartAsync();
+        await ZeroTierStopsAsync();
+
+        model.OnTheWindowClosing("me", TheNetworkId);
+
+        Assert.Contains(
+            "The network: The app cannot reach ZeroTier.",
+            Assert.Single(_environment.Reports));
+    }
 }

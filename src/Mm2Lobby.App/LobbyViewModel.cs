@@ -264,6 +264,8 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         // ZeroTier check then reports the fault, and the player sees the text
         // that caused it.
         _networkId = environment.Config.ZeroTierNetworkId;
+
+        ReportMessage = TheReportLine(environment);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -492,6 +494,21 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     }
 
     public bool HasLaunchReport => _launchReport.Length > 0;
+
+    /// <summary>
+    /// The line that names the file of the report. The player sends that file,
+    /// so the player must find it.
+    /// </summary>
+    /// <remarks>
+    /// The line also names a report that the last close could not write. The
+    /// window is gone at the moment of that failure, so no line of it reaches
+    /// the player then, and a dialog would stop a player who is closing the
+    /// app. The configuration file carries the reason to this start.
+    ///
+    /// The value never changes while the app runs, so this property needs no
+    /// setter and no event.
+    /// </remarks>
+    public string ReportMessage { get; }
 
     /// <summary>Runs the checks and starts the lobby. The window calls this method once.</summary>
     public Task StartAsync() => StartFromAButtonAsync();
@@ -848,6 +865,149 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         _role = role;
         _path = LaunchPath.None;
+    }
+
+    /// <summary>
+    /// Takes the text of the two boxes, then writes the report of this
+    /// session. The window calls this method while it closes.
+    /// </summary>
+    /// <remarks>
+    /// The order of the two steps is the rule of this method. Each binding
+    /// writes when its box loses the focus, and a player who types in a box
+    /// and then closes the window never gives it that focus. So the name of
+    /// the player reaches the file first, and that save is the one that
+    /// matters. WriteTheReport comes second and it throws nothing, so a report
+    /// that fails cannot take the name of the player with it, and it cannot
+    /// stop the app from closing.
+    ///
+    /// The window calls this method before it tears the lobby down. The
+    /// report therefore holds the list of players and the title that the
+    /// player saw, and not the empty list of a window that already stopped.
+    /// </remarks>
+    /// <param name="displayName">The text of the name box.</param>
+    /// <param name="networkId">The text of the network ID box.</param>
+    public void OnTheWindowClosing(string displayName, string networkId)
+    {
+        DisplayName = displayName;
+        ZeroTierNetworkId = networkId;
+
+        WriteTheReport();
+    }
+
+    /// <summary>
+    /// Writes the report of this session, and remembers a write that failed.
+    /// This method throws nothing.
+    /// </summary>
+    /// <remarks>
+    /// WARNING: a failure here must never stop the app from closing. So the
+    /// catch below takes every type of exception, and not the two types that
+    /// a file write usually throws. A report is worth less than the app that
+    /// the player closes.
+    ///
+    /// The player reads no line of the window at this moment. So the reason
+    /// goes to the configuration file, and the window shows it at the next
+    /// start. The player can therefore learn that the app wrote no file, and
+    /// the app interrupts nobody at the close.
+    /// </remarks>
+    private void WriteTheReport()
+    {
+        string fault;
+
+        try
+        {
+            _environment.WriteReport(QuitReport.Build(TheFacts()));
+            fault = string.Empty;
+        }
+        catch (Exception e)
+        {
+            fault = e.Message;
+        }
+
+        RememberTheReportFault(fault);
+    }
+
+    /// <summary>
+    /// Writes the reason of a failed report to the one configuration object
+    /// and saves the file. A write that worked takes an older reason away,
+    /// because a line that names a failure of last week is a lie.
+    /// </summary>
+    private void RememberTheReportFault(string fault)
+    {
+        var config = _environment.Config;
+
+        // The binding of a box saves on every loss of the focus, and this
+        // method follows that rule: the same value must not write the file
+        // again.
+        if (config.LastReportFault == fault) return;
+
+        config.LastReportFault = fault;
+
+        try
+        {
+            _environment.SaveConfig();
+        }
+        catch (Exception)
+        {
+            // The name of the player already reached the file, in the step
+            // above this one. This save carries the reason of a failed report
+            // and nothing else, so a failure here costs the player nothing
+            // that they typed.
+        }
+    }
+
+    /// <summary>
+    /// Reads the facts of the report off the window. Every value here is a
+    /// value that the window shows on screen.
+    /// </summary>
+    private QuitReportFacts TheFacts() => new()
+    {
+        Time = _environment.Now,
+        AppVersion = _environment.AppVersion,
+        PlayerName = _displayName,
+        NetworkId = _networkId,
+        CanStartTheGameInTheRace = TheLobbyPathIsOpen(),
+        Reach = TheReachInWords(),
+        Title = _hostTitle,
+        Address = _hostAddress,
+        Checks = CheckRows.ToList(),
+        Players = PeerRows.ToList(),
+        StatusMessage = _statusMessage,
+        FaultMessage = _faultMessage,
+        LaunchReport = _launchReport,
+    };
+
+    /// <summary>
+    /// Names what the app reached. Each state takes its own sentence, as the
+    /// title of the host panel does: a report that said "on the network" for
+    /// every state would send a reader to look for a friend while the fault
+    /// sat on this computer.
+    /// </summary>
+    private string TheReachInWords()
+    {
+        if (_lobby is not { } lobby) return "The app has not started the lobby.";
+
+        return lobby.Reach switch
+        {
+            ZeroTierReach.OnTheNetwork => "The app is on the network.",
+            ZeroTierReach.NoAnswer => "The app cannot reach ZeroTier.",
+            _ => "This computer has no address on the network.",
+        };
+    }
+
+    /// <summary>
+    /// Builds the line that the window shows about the report. The line names
+    /// the path, and it names a write that the last close could not do.
+    /// </summary>
+    private static string TheReportLine(ILobbyEnvironment environment)
+    {
+        var line = $"The app writes a report to {environment.ReportPath} when you close "
+            + "this window. Send that file to the person who runs the group.";
+
+        var fault = environment.Config.LastReportFault;
+
+        return fault.Length == 0
+            ? line
+            : $"The app did not write the report when it closed last time: {fault} {line}";
     }
 
     public async ValueTask DisposeAsync()

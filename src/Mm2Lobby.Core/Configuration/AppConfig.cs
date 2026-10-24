@@ -11,6 +11,19 @@ public sealed class AppConfig
     public string ZeroTierNetworkId { get; set; } = string.Empty;
 
     /// <summary>
+    /// The reason that the app could not write the report file when it last
+    /// closed. The value is an empty text after a write that worked.
+    /// </summary>
+    /// <remarks>
+    /// The app writes the report while the window closes, so no line of the
+    /// window reaches the player at that moment. The reason therefore goes to
+    /// this file, and the window shows it at the next start. A dialog at the
+    /// close would stop the player, and the close is the wrong moment for
+    /// that.
+    /// </remarks>
+    public string LastReportFault { get; set; } = string.Empty;
+
+    /// <summary>
     /// This property holds the last display name that the app received from
     /// each ZeroTier node ID. The lobby uses the map to show a peer whose app
     /// is closed.

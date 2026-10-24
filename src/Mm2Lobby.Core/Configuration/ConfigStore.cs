@@ -46,6 +46,7 @@ public sealed class ConfigStore
             // here. Neither property accepts a null.
             config.GamePath ??= string.Empty;
             config.ZeroTierNetworkId ??= string.Empty;
+            config.LastReportFault ??= string.Empty;
 
             config.RememberedNames = CopyValidEntries(config.RememberedNames);
 

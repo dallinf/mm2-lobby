@@ -25,6 +25,18 @@ public interface ILobbyEnvironment
     string AppVersion { get; }
 
     /// <summary>
+    /// The path of the report file. The window shows this path, because the
+    /// player sends that file and cannot send a file that they cannot find.
+    /// </summary>
+    string ReportPath { get; }
+
+    /// <summary>
+    /// The time now. The report of the close carries this value, and a test
+    /// gives a fixed time.
+    /// </summary>
+    DateTimeOffset Now { get; }
+
+    /// <summary>
     /// The launcher that starts MM2 in the race. The window asks it one time
     /// for each press of the launch button, and it holds the session that a
     /// launch which works gives back.
@@ -43,6 +55,13 @@ public interface ILobbyEnvironment
 
     /// <summary>Writes Config to the file. This method can throw. The caller catches.</summary>
     void SaveConfig();
+
+    /// <summary>
+    /// Writes the report to the one report file, and overwrites the report of
+    /// the last session. This method can throw. The caller catches, because a
+    /// report that fails must not stop the app from closing.
+    /// </summary>
+    void WriteReport(string text);
 
     /// <summary>Starts MM2. This method can throw. The caller catches.</summary>
     void LaunchGame(string gamePath);
