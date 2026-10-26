@@ -796,6 +796,22 @@ public class LobbyServiceTests : IDisposable
         Assert.Equal("10.147.17.42", service.MyAddress);
     }
 
+    // The service owns the network ID, and the directory leaves the controller
+    // of that network out of the list. This test reads the whole path, from the
+    // configuration to Peers. The controller of 0123456789abcdef is the node
+    // 0123456789.
+    [Fact]
+    public async Task RunCycleAsync_leaves_the_controller_of_the_network_out_of_the_peers()
+    {
+        _zeroTier.Quality["0123456789"] = LinkQuality.Direct;
+        _zeroTier.Quality["cc55667788"] = LinkQuality.Direct;
+        await using var service = Build();
+
+        await service.StartAsync(default);
+
+        Assert.Equal("cc55667788", Assert.Single(service.Peers).NodeId);
+    }
+
     [Fact]
     public async Task RunCycleAsync_remembers_no_name_while_the_ZeroTier_service_is_absent()
     {

@@ -166,7 +166,10 @@ public sealed class LobbyService : IAsyncDisposable
             await AnnounceAsync(ct);
 
             Peers = await _directory.GetPeersAsync(
-                _status?.NodeId ?? string.Empty, _config.RememberedNames, ct);
+                _status?.NodeId ?? string.Empty,
+                _config.ZeroTierNetworkId,
+                _config.RememberedNames,
+                ct);
 
             try
             {

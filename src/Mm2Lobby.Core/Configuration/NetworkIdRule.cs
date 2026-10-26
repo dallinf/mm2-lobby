@@ -18,6 +18,31 @@ public static class NetworkIdRule
     /// <summary>The number of characters of a ZeroTier network ID.</summary>
     public const int Length = 16;
 
+    /// <summary>The number of characters of a ZeroTier node ID.</summary>
+    public const int NodeIdLength = 10;
+
+    /// <summary>
+    /// Reads the node ID of the controller of one network. The method answers
+    /// the empty string when the value is not a valid network ID, and the
+    /// empty answer names no node.
+    /// </summary>
+    /// <remarks>
+    /// ZeroTier builds a network ID from the node ID of the controller of that
+    /// network, which is 10 characters, and 6 more characters. So the first 10
+    /// characters of a valid network ID are the node ID of the controller.
+    ///
+    /// The controller of a network that ZeroTier Central holds is a machine of
+    /// the ZeroTier service. It joins no race, and it runs no copy of this app.
+    /// The lobby therefore leaves it out of the player list.
+    ///
+    /// The method reads a valid ID only. The app holds no network ID before the
+    /// player sets one, and a player can paste a part of an ID. A short value
+    /// gives no controller, because the first 10 characters of a short value
+    /// can be the node ID of a player.
+    /// </remarks>
+    public static string ControllerNodeId(string? networkId)
+        => TryRead(networkId, out var id) ? id[..NodeIdLength] : string.Empty;
+
     /// <summary>
     /// Reads one network ID. The method returns true when the value holds a
     /// valid ID, and then id holds that ID in lower case. The method returns
