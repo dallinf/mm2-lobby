@@ -717,9 +717,10 @@ Add-Line ''
 
 $inboundRule  = 'MM2 Lobby - Midtown Madness 2 (inbound)'
 $outboundRule = 'MM2 Lobby - Midtown Madness 2 (outbound)'
+$appRule      = 'MM2 Lobby - the lobby app (inbound)'
 $absentRule   = 'MM2 Lobby - a rule that cannot exist 8f2a'
 
-foreach ($rule in @($inboundRule, $outboundRule, $absentRule)) {
+foreach ($rule in @($inboundRule, $outboundRule, $appRule, $absentRule)) {
     # This string repeats the command line that FirewallCheck builds.
     $line  = 'netsh.exe advfirewall firewall show rule name="' + $rule + '"'
     $probe = Invoke-Probe $line
@@ -754,9 +755,14 @@ Add-Line '      2. Does "set rule" give 0 on a match and another code on no matc
 Add-Line '      3. Does "set rule" change every rule of the same name?'
 Add-Line '      4. Does "set rule" leave a disabled rule disabled?'
 Add-Line '      5. Does each elevated call raise one permission prompt, so the fix'
-Add-Line '         raises two prompts and no more?'
-Add-Line '    Press Fix in the app once, count the prompts, and then read the two'
+Add-Line '         raises three prompts and no more?'
+Add-Line '    Press Fix in the app once, count the prompts, and then read the three'
 Add-Line '    rules in Windows Defender Firewall. Tell the developer what you saw.'
+Add-Line ''
+Add-Line '    The app adds three rules. Two name the game, for traffic in and out.'
+Add-Line '    The third names the app itself, for traffic in. The app listens on'
+Add-Line '    the port 48200, so without that third rule a player hears nobody'
+Add-Line '    while every friend still hears them.'
 
 # --- 5e The permission prompt --------------------------------------------
 
