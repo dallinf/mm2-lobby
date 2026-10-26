@@ -29,6 +29,7 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
     /// <summary>The name of the game process, with no file extension.</summary>
     private const string GameProcessName = "midtown2";
 
+    private readonly ILobbyApi _api;
     private readonly INativeAllocator _allocator;
     private readonly Func<string, bool> _fileExists;
     private readonly Func<LobbyRegistration> _readRegistration;
@@ -39,6 +40,7 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
     /// <summary>The launcher that the app builds. It talks to the real Windows.</summary>
     public DirectPlayLobbyLauncher()
         : this(
+            new WindowsLobbyApi(),
             new ProcessNativeAllocator(),
             File.Exists,
             ReadRegistration,
@@ -49,6 +51,7 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
     }
 
     internal DirectPlayLobbyLauncher(
+        ILobbyApi api,
         INativeAllocator allocator,
         Func<string, bool> fileExists,
         Func<LobbyRegistration> readRegistration,
@@ -56,6 +59,7 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
         bool isWindows,
         bool is64BitProcess)
     {
+        _api = api;
         _allocator = allocator;
         _fileExists = fileExists;
         _readRegistration = readRegistration;
@@ -243,7 +247,7 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
             var connectionBlock = blocks.Allocate(Marshal.SizeOf<DplConnection>());
             Marshal.StructureToPtr(connection, connectionBlock, false);
 
-            hr = LobbyInterop.RunApplication(lobby, 0, out var applicationId, connectionBlock, IntPtr.Zero);
+            hr = _api.RunApplication(lobby, 0, out var applicationId, connectionBlock, IntPtr.Zero);
             trail.Add($"RunApplication, {attempt.Label}, with the flag 0x{attempt.Flags:X8}: "
                 + DirectPlayHResults.Describe(hr));
 
@@ -280,7 +284,7 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
         // garbage collector cannot take the handle away from DirectPlay.
         var reached = new ManualResetEvent(false);
 
-        var hr = LobbyInterop.SetLobbyMessageEvent(
+        var hr = _api.SetLobbyMessageEvent(
             lobby, 0, applicationId, reached.SafeWaitHandle.DangerousGetHandle());
 
         trail.Add("SetLobbyMessageEvent: " + DirectPlayHResults.Describe(hr));
@@ -289,10 +293,10 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
         return new LobbyLifetime(
             lobby,
             kept,
-            LobbyInterop.Release,
+            _api.Release,
             _gameIsRunning,
             reached.WaitOne,
-            comStarted ? Ole32.CoUninitialize : null);
+            comStarted ? _api.CoUninitialize : null);
     }
 
     /// <summary>The compound address, and its byte count.</summary>
@@ -302,7 +306,7 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
     /// This method builds a TCP/IP address with CreateCompoundAddress. The
     /// first call asks for the size, and the second call fills the buffer.
     /// </summary>
-    private static AddressBuffer? BuildAddress(
+    private AddressBuffer? BuildAddress(
         IntPtr lobby,
         NativeBlocks blocks,
         string? hostAddress,
@@ -343,7 +347,7 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
         }
 
         uint needed = 0;
-        var first = LobbyInterop.CreateCompoundAddress(
+        var first = _api.CreateCompoundAddress(
             lobby, block, (uint)elements.Count, IntPtr.Zero, ref needed);
 
         trail.Add($"CreateCompoundAddress, the size pass: {DirectPlayHResults.Describe(first)}, "
@@ -352,7 +356,7 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
         if (needed == 0) return null;
 
         var buffer = blocks.Allocate((int)needed);
-        var second = LobbyInterop.CreateCompoundAddress(
+        var second = _api.CreateCompoundAddress(
             lobby, block, (uint)elements.Count, buffer, ref needed);
 
         trail.Add($"CreateCompoundAddress, the fill pass: {DirectPlayHResults.Describe(second)}.");
@@ -364,39 +368,39 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
     /// This method creates the lobby object. Route 1 is the plain export, which
     /// needs no COM class registration. Route 2 is CoCreateInstance.
     /// </summary>
-    private static IntPtr CreateLobby(List<string> trail)
+    private IntPtr CreateLobby(List<string> trail)
     {
-        var library = LobbyFactory.LoadLibrary();
+        var library = _api.LoadLibrary();
         trail.Add(library == IntPtr.Zero
             ? $"Windows did not load {LobbyFactory.Library}."
             : $"Windows loaded {LobbyFactory.Library}.");
 
         if (library != IntPtr.Zero)
         {
-            var hr = LobbyFactory.CreateByExport(library, out var version1);
+            var hr = _api.CreateByExport(library, out var version1);
             trail.Add("DirectPlayLobbyCreateA: " + DirectPlayHResults.Describe(hr));
 
             if (!DirectPlayHResults.Failed(hr) && version1 != IntPtr.Zero)
             {
-                var upgrade = LobbyInterop.QueryInterface(
+                var upgrade = _api.QueryInterface(
                     version1, DirectPlayIds.IidDirectPlayLobby3A, out var version3);
 
                 trail.Add("QueryInterface(IID_IDirectPlayLobby3A): " + DirectPlayHResults.Describe(upgrade));
-                LobbyInterop.Release(version1);
+                _api.Release(version1);
 
                 if (!DirectPlayHResults.Failed(upgrade) && version3 != IntPtr.Zero) return version3;
             }
         }
 
-        var com = LobbyFactory.CreateByCom(DirectPlayIds.IidDirectPlayLobby3A, out var lobby);
+        var com = _api.CreateByCom(DirectPlayIds.IidDirectPlayLobby3A, out var lobby);
         trail.Add("CoCreateInstance(IID_IDirectPlayLobby3A): " + DirectPlayHResults.Describe(com));
 
         return DirectPlayHResults.Failed(com) ? IntPtr.Zero : lobby;
     }
 
-    private static bool StartCom(List<string> trail)
+    private bool StartCom(List<string> trail)
     {
-        var hr = Ole32.CoInitializeEx(IntPtr.Zero, Ole32.ApartmentThreaded);
+        var hr = _api.CoInitializeEx(IntPtr.Zero, Ole32.ApartmentThreaded);
         trail.Add("CoInitializeEx(COINIT_APARTMENTTHREADED): " + DirectPlayHResults.Describe(hr));
 
         // A failure means that the thread already runs in another apartment.
@@ -405,22 +409,22 @@ public sealed class DirectPlayLobbyLauncher : ILobbyLauncher
         return !DirectPlayHResults.Failed(hr);
     }
 
-    private static void StopCom(bool comStarted)
+    private void StopCom(bool comStarted)
     {
-        if (comStarted) Ole32.CoUninitialize();
+        if (comStarted) _api.CoUninitialize();
     }
 
     /// <summary>
     /// This method gives the lobby object back after a failure. No game runs,
     /// so nothing reads the interface.
     /// </summary>
-    private static LobbyLaunchResult Give(
+    private LobbyLaunchResult Give(
         IntPtr lobby,
         bool comStarted,
         LobbyLaunchFault fault,
         List<string> trail)
     {
-        LobbyInterop.Release(lobby);
+        _api.Release(lobby);
         StopCom(comStarted);
 
         return LobbyLaunchResult.Failure(fault, Report(trail));

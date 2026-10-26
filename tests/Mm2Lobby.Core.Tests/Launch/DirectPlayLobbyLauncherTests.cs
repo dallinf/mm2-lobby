@@ -255,6 +255,7 @@ public class DirectPlayLobbyLauncherTests
     }
 
     private DirectPlayLobbyLauncher Build() => new(
+        new FakeLobbyApi(),
         _allocator,
         path =>
         {
