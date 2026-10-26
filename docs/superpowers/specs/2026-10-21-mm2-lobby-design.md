@@ -303,6 +303,7 @@ public sealed class LobbyService : IAsyncDisposable
     public Peer? CurrentHost { get; }
     public string? MyAddress { get; }
     public Exception? LastCycleFault { get; }
+    public ZeroTierReach Reach { get; }
     public event Action<IReadOnlyList<Peer>>? PeersChanged;
 
     public Task StartAsync(CancellationToken ct);
@@ -334,6 +335,36 @@ anybody, ever. The window shows it so a player can say what it said.
 `StartAsync` may be called once. On any failure the caller disposes the instance
 and constructs a new one.
 
+#### The reach of the last cycle, and why it exists
+
+`ZeroTierClient` returns null for every failure and throws nothing. So a cycle
+that cannot reach ZeroTier sends no announcement, finds no peer, and records no
+fault: `LastCycleFault` stays null, because nothing threw. The window then
+showed "No one hosts a race now.", which is a different fact from "the app sees
+nobody", and it sent the owner to look for a friend while his own ZeroTier was
+stopped.
+
+`Reach` is the record of that silence. It holds three values, because the three
+states need three different sentences:
+
+| Value | What it means | What the window says |
+|---|---|---|
+| `NoAnswer` | ZeroTier gave no answer. The service is stopped, or the account cannot read the token. The service also starts at this value, before its first cycle | The app cannot reach ZeroTier, and the player starts the ZeroTier One service in the Services list of Windows |
+| `NoAddress` | ZeroTier answered, and this computer holds no address on the network | This computer has no address, and the player chooses **Check again** to read the reason from the ZeroTier row |
+| `OnTheNetwork` | ZeroTier answered, and this computer holds an address | "No one hosts a race now.", and only here |
+
+`RunCycleAsync` writes the value from the same two answers that
+`AnnounceAsync` reads, in the same order, so the reach cannot disagree with the
+silence of that cycle. A cycle that throws leaves the value of the last cycle
+that completed, and `LastCycleFault` then names the exception.
+
+**The window gates Host, Join and the launch button on `OnTheNetwork`**, and it
+names the reason in the same place. An announcement that nobody receives gives
+the player no race, and a window must not offer an action that it knows cannot
+work. The stop of a race stays live, because the stop needs no network. The
+service reads ZeroTier every cycle, so the buttons come back by themselves
+after the player starts the service.
+
 ### 5.6 PreflightCheck
 
 **What it does.** Finds and fixes the blockers before a player hits them
@@ -343,11 +374,15 @@ inside the game. Most support work lands here, so this screen deserves care.
 public enum CheckStatus { Pass, Fail, Unavailable }
 
 public sealed record CheckResult(
-    string Name, CheckStatus Status, string Message, string? FixDescription);
+    string Name, CheckStatus Status, string Message, string? FixDescription)
+{
+    public bool Blocks { get; init; } = true;
+}
 
 public interface ICheck
 {
     string Name { get; }
+    bool Blocks => true;
     Task<CheckResult> RunAsync(CancellationToken ct);
     Task<CheckResult> FixAsync(CancellationToken ct);
 }
@@ -356,17 +391,95 @@ public interface ICheck
 `PreflightRunner` runs every check even when an earlier one fails, so the
 player sees the whole list at once rather than one problem per attempt.
 
-| Check | Test | Fix |
-|---|---|---|
-| ZeroTier | `IZeroTierClient` reports the service online and the network status `OK` | Open the download page, or start the service, or show the network ID to join |
-| DirectPlay | `C:\Windows\SysWOW64\dplayx.dll` exists | Run `dism /online /enable-feature /featurename:DirectPlay /all`, with an elevation prompt |
-| MM2 found | Enumerate the values under `HKLM\SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Midtown Madness 2` and take the first that points at an existing `midtown2.exe`; otherwise use the saved path | Open a file picker and save the path |
-| Firewall | `netsh advfirewall firewall show rule name="MM2 Lobby - Midtown Madness 2"` finds the rule | Add inbound and outbound allow rules, with an elevation prompt |
+| Check | Blocks | Test | Fix |
+|---|---|---|---|
+| ZeroTier | yes | `IZeroTierClient` reports the service online and the network status `OK` | Open the download page, or start the service, or show the network ID to join |
+| DirectPlay | yes | `C:\Windows\SysWOW64\dplayx.dll` exists | Run `dism /online /enable-feature /featurename:DirectPlay /all`, with an elevation prompt |
+| MM2 found | yes | Enumerate the values under `HKLM\SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Midtown Madness 2` and take the first that points at an existing `midtown2.exe`; otherwise use the saved path | Open a file picker and save the path |
+| Firewall | yes | `netsh advfirewall firewall show rule name="MM2 Lobby - Midtown Madness 2"` finds the rule | Add inbound and outbound allow rules, with an elevation prompt |
+| DirectPlay registration | no | The key `MM2 Lobby - Midtown Madness 2` under `HKLM\SOFTWARE\WOW6432Node\Microsoft\DirectPlay\Applications` holds the application GUID of the group, names this computer's `midtown2.exe`, starts its `File` value with a backslash, and holds no `Launcher` value | Import one registry script with `reg import`, with one elevation prompt. The script writes `Guid`, `Path`, `File`, `CommandLine` and `CurrentDirectory`, and it deletes `Launcher` |
+| Compatibility mode | no | The value of `midtown2.exe` under `HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers` holds no legacy operating system token | Remove the operating system tokens and keep every other token. The key belongs to the account of the player, so this fix needs no elevation |
+
+#### The app owns one DirectPlay key, and it touches no other
+
+The key name `MM2 Lobby - Midtown Madness 2` matches the firewall rules, so one
+name marks every thing that this app owns. The check reads that key alone, and
+the fix writes that key alone.
+
+An installer of the game writes a key of its own. That key holds the
+application GUID of the game, and another program such as GameRanger reads it.
+A fix that wrote over that key would break the other program, and the player
+would never connect the breakage to this app. Two keys that name the same
+executable sit beside each other with no harm.
+
+`LobbyApplicationReader.ReadFrom` reads our key and no other key. The launcher
+and the setup check both call it, so the two cannot disagree.
+
+**There is no fallback to another key, and there must never be one.** An
+earlier draft read the first key whose name holds the word `midtown` when ours
+was absent. Walk that case: a friend who installed the game has the installer's
+key, holding the GUID of the game, and has not yet pressed Fix. The launcher
+would start the game with a GUID that nobody in the group shares, and the game
+would open into a session that **looks correct and that no friend can see**.
+MM2 reports no error and no code, so no player can report it either. That is
+the silent failure this section opens with, built deliberately.
+
+The fallback helps only a player who has not pressed Fix, and that player is
+already handled: the row reads `Optional`, one press writes our key, and the
+reader finds it from then on. A computer with no key of ours reports `NoKey`,
+the app uses the ordinary launch, and the player types the address of the host.
+That is what every player has today, so nobody is worse off.
+
+The reader also refuses a key of ours that holds the wrong GUID, and reports
+`WrongGuid`. Someone may edit the key by hand. The check treats that as a
+failure, and the launcher must not disagree with the check. Both rules live in
+the one method that reads the registry, so a session that nobody can see is
+**structurally impossible** and not merely unlikely.
+
+#### The application GUID
+
+`LobbyRegistrationCheck.ApplicationGuid` holds
+`{42418287-74D9-4C2D-A8D0-1B5D4D811C21}`. A run on two computers on 2026-10-23
+proved it: one player hosted, the other joined, and the player who joined typed
+no address.
+
+DirectPlay shows a player only the sessions that carry the same application
+GUID. The value does not have to be the GUID of the game. It has to be the same
+value on every computer of the group, and every player runs this app. The fix
+writes this value every time, and the app never generates one.
+
+**Do not change this value.** Every player already holds it. A player who holds
+another value meets nobody, and MM2 then reports that it found no host and
+gives no reason.
+
+`LobbyApplicationReader.ApplicationGuid` holds the value, and
+`LobbyRegistrationCheck.ApplicationGuid` names the same field. The reader
+compares the key against it, so the check and the launcher read one source.
 
 The DirectPlay check reads a file rather than asking DISM, because
 `dism /online /get-featureinfo` needs administrator rights and the check must
 run without them. Verify the file test during the first manual test. If it
 proves wrong, fall back to the DISM query and accept the elevation prompt.
+
+#### A check that blocks, and a check that gives advice
+
+`ICheck.Blocks` is true for every check that names a condition MM2 needs.
+`PreflightRunner.AllPassed` reads the blocking results only, and the window
+gates **Host** and **Join** on that answer.
+
+The last two checks set `Blocks` to false. The app raced before either one
+existed: the window shows the address of the host, the player types it into
+MM2, and the race happens. Each of these two checks buys the one click start
+and nothing else. A block would take the race away from a player who cannot
+write the registry, for example on a work computer with no administrator
+rights. That is a loss of capability, and this app does not take a capability
+away to add a feature.
+
+**The window still owns every row.** It shows the name, the state, the reason
+and the **Fix** button of an advisory check beside the others. The row reads
+`Optional` and not `Problem`, so the player can see that the race goes on. The
+setup panel opens while any check does not pass, blocking or not, so a player
+always reads the offer.
 
 The firewall check matters most. When the firewall blocks the game, MM2 fails
 silently and reports only that it found no host.
@@ -389,6 +502,72 @@ then joins with no dialog. Phase two is Windows-only and is the hardest piece
 of the project. It ships behind the same user interface, so phase one keeps
 working if phase two stalls.
 
+#### One press plays, and the labels follow the path
+
+The window knows before a press whether the lobby path is open: every advisory
+check passed in the last run, and `ILobbyLauncher.CanLaunch` answers true. That
+is why the collapse below is honest. One method answers for it, the labels read
+it, and the press reads the same method.
+
+**While the lobby path is open, one press plays.** One press of **Host a race
+and start the game** announces the race and opens MM2 in it. One press of
+**Join the host and start the game** opens MM2 in the race of the host. The
+player types no address and presses nothing more.
+
+The two steps existed for one reason: MM2 covers the whole screen, so the
+player had to read the address of the race before the game hid it. The lobby
+launch gives the address to the game, and that reason is gone.
+
+**While the lobby path is shut, the two steps stay.** **Host a race** and
+**Join the host** announce the player and start no game. He reads the address,
+and then the launch button starts MM2. No label promises a game that its own
+path does not start.
+
+**A press of Host or Join never starts MM2 the ordinary way.** A lobby launch
+that fails leaves the player with no game and with the two steps: the window
+names the reason, names the address, and names the launch button. The reason is
+the reason of the split itself — the ordinary start covers the screen, and the
+player must read the address first.
+
+**The third button earns its place.** Before any start it is the second step of
+the fallback, and it reads **Start the race** for the host or **Start the game**
+for a player who joins. After any start it reads **Start the game again**, and
+that is the one job that is left: MM2 stops, and the player starts it again
+without a new **Host**, which would cost him his place in the lobby.
+
+#### The window chooses the path, and the steps follow the path
+
+The launch button takes one of two paths. The window takes the lobby path when
+every advisory check passed in the last run and `ILobbyLauncher.CanLaunch`
+answers true. In every other case, and after a launch that fails for any
+reason, it takes the ordinary path of phase one.
+
+**The steps must follow the path that the window took.** After a lobby launch
+the game holds the address already, so the step `Type the host address` would
+be false. After an ordinary launch that step is the one the player needs most.
+`JoinInstructions` therefore holds four lists, and one method of the window
+chooses between them. The window calls that method after each press and on
+every refresh, so a list cannot go stale two seconds later.
+
+The window shows the address in both cases. The address is information and not
+an instruction: a friend whose own lobby path is shut still needs it.
+
+**The app publishes as `win-x86`.** Windows 11 ships a 32 bit `dplayx.dll`
+only, so a 64 bit process reports `WrongProcessBitness` and never reaches
+DirectPlay.
+
+**The window holds one session.** `ILobbySession` owns the DirectPlay
+interface and the memory that MM2 reads about three seconds after the launch,
+so the window holds it for as long as the game may run and disposes it when
+the player closes the window. The launch button takes no guard against a
+second press, because MM2 stops and the player must start it again without a
+new **Host**. The bound therefore sits on the session and not on the button:
+each press disposes the session that the window holds, and a session releases
+the interface only after the game process ends. The press that follows a crash
+finds no game, so the old session closes and one new session takes its place.
+A press while the game still runs closes nothing, and the window then takes
+the ordinary path.
+
 ### 5.8 Configuration
 
 One file at `%APPDATA%\Mm2Lobby\config.json`.
@@ -398,11 +577,28 @@ One file at `%APPDATA%\Mm2Lobby\config.json`.
   "displayName": "dallin",
   "gamePath": "C:\\Program Files (x86)\\Microsoft Games\\Midtown Madness 2\\midtown2.exe",
   "zeroTierNetworkId": "0123456789abcdef",
+  "lastReportFault": "",
   "rememberedNames": { "bb11223344": "chris" }
 }
 ```
 
 `displayName` defaults to the Windows computer name.
+
+`lastReportFault` holds the reason that the app could not write the report
+file when it last closed, and an empty text after a write that worked. The app
+writes that report while the window closes, so no line of the window reaches
+the player at that moment. The window shows the reason at the next start. A
+missing value loads an empty text, so the file of an older version still
+loads.
+
+**One report file at `%APPDATA%\Mm2Lobby\report.txt`.** The app writes it when
+the player closes the window, and each write overwrites the report of the last
+session, so the folder does not grow. The file holds what the window showed:
+the time, the version of the app, the setup rows, the network, the race, the
+list of players, the last message, and the trail of the last launch. It holds
+nothing that the window does not show, and the app never reads the
+authentication token of ZeroTier. The window names the path of the file in one
+line, because the player sends that file to the person who runs the group.
 
 **The window owns the configuration object, and it is the only owner.** It loads
 one `AppConfig`, passes that instance to `LobbyService`, and hands the same
@@ -467,15 +663,24 @@ These are the failures the group will actually meet.
 | Failure | What the app does |
 |---|---|
 | ZeroTier is not running | `PreflightCheck` blocks the lobby and offers to start the service |
+| ZeroTier stops after the checks ran | `LobbyService.Reach` says `NoAnswer`. **The window names that state, and it never says that nobody hosts.** It takes Host, Join and the launch button away, and it tells the player to start the ZeroTier One service in the Services list of Windows. The next cycle finds the network again, so the buttons come back without a press |
+| This computer holds no address on the network | `Reach` says `NoAddress`. The window names that state, takes the same three buttons away, and sends the player to **Check again** and the ZeroTier row. One cause of this state is a configuration that ZeroTier is still asking for, so the row is the one place that can name the reason |
+| No lobby service runs | The window says that it has not started the lobby and names **Check again**. It said "No one hosts a race now." here too, which it could not know |
+| A press of Host or Join that cannot reach the race | **The window starts no game.** It announces the player, names the reason and the step of `LobbyLaunchMessages`, shows the address, and names the launch button. The player reads the address before MM2 covers the screen, which is the whole reason that the two steps exist |
 | A friend is online but their app is not running | Show the remembered name and "app not running", which the user must be able to tell apart from "offline" |
 | DirectPlay is turned off | `PreflightCheck` blocks and runs the `dism` command |
 | The firewall blocks the game | `PreflightCheck` adds the rule before the player ever starts MM2 |
+| The DirectPlay key of this app is missing, or it holds another application GUID, or it names another folder, or it holds a `Launcher` value | **The window shows the row and does not block.** The app offers to write its own key with one elevation prompt. It reads and writes that key only, so a key that an installer wrote stays as it is, and the launcher never reads one. Without the key the player still races: the window shows the address and the player types it into MM2. A block would take that race away from a player who holds no administrator rights. The window gates **Host** and **Join** on the blocking checks only |
+| MM2 carries a legacy compatibility mode | **The window shows the row and does not block**, for the same reason. The app offers to remove the mode. The fix writes `HKCU`, so Windows asks for no permission. The fix removes the operating system tokens only, because a player can carry other tokens that the game needs |
 | The host's link is relayed, not direct | Show the link quality beside the host's name, the way GameRanger shows a ping estimate, so a player understands a slow race |
 | App versions disagree | The announcement carries `appVersion`, `PeerTable` stores it, and `Peer.AppVersion` carries it to the window. **The window owns the warning** — it compares each peer's version against its own and marks any mismatch. Revision 2 demanded this warning without giving `Peer` a field to carry it, so no task could have built it |
 | A cycle fails for any reason | The pump absorbs it and the next tick tries again, so the list goes stale rather than frozen. `LobbyService.LastCycleFault` holds the exception and the window shows it, because otherwise no information about the failure reaches anybody |
 | A stray datagram arrives from the home network | `PeerTable` rejects it on the subnet test |
 | `zerotier-cli` is missing or its output changes | `ZeroTierClient` returns null or an empty result and the preflight screen explains it. The app never crashes on unexpected output |
 | Two players claim the host role | Both appear as hosting. The group sorts it out in Discord. The app does not arbitrate |
+| The lobby launch fails for any reason | **The window starts the game the ordinary way**, shows the address, and shows the three steps. The status line names the game first, then the reason and the step that `LobbyLaunchMessages` gives. A panel holds the trail of the DirectPlay calls, which the player can send to the person who runs the group. No player is worse off than he was before the lobby path existed |
+| The lobby launch never opens | The advisory checks did not pass, or `CanLaunch` answers false. **The window says nothing about the lobby path** and starts the game the ordinary way. An advisory row already names its own reason and offers the **Fix**, and a second message would say it twice |
+| The player presses the launch button again | The window starts a game every time, and the label of the button reads **Start the game again** after the first start. It disposes the session that it holds first, and it takes a new session only when the old one closed. So the window holds one session and never more |
 
 ## 8. Testing
 

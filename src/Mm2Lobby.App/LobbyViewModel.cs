@@ -6,6 +6,7 @@ using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
 using Mm2Lobby.Core.Preflight;
+using Mm2Lobby.Core.ZeroTier;
 
 namespace Mm2Lobby.App;
 
@@ -18,22 +19,121 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
     private const string HostLabel = "Host a race";
     private const string StopLabel = "Stop the race";
-    private const string NoHostTitle = "No one hosts a race now.";
+    private const string JoinLabel = "Join the host";
     private const string WorkingMessage = "The app is busy. Please wait.";
 
     /// <summary>
-    /// The label of the launch button for the host. The host starts the race,
-    /// so the button can name the race.
+    /// The title while the app is on the network, hears every friend, and
+    /// hears no host.
+    /// </summary>
+    /// <remarks>
+    /// WARNING: this sentence holds for one state only. The app must reach
+    /// ZeroTier and hold an address on the network before it can say that
+    /// nobody hosts. In every other state the app sees nobody at all, which is
+    /// another fact, and this sentence then sends the player to look for a
+    /// friend while the fault is on his own computer. The owner met that
+    /// defect.
+    /// </remarks>
+    private const string NoHostTitle = "No one hosts a race now.";
+
+    /// <summary>
+    /// The title while no lobby service runs. A check that blocks did not
+    /// pass, or the start of the service failed. The status line and the rows
+    /// hold the reason, so this text names the button that runs them again.
+    /// </summary>
+    private const string NoLobbyTitle =
+        "The app has not started the lobby. It sees no player, and it announces no race. "
+        + "Choose Check again in the Setup list above.";
+
+    /// <summary>
+    /// The title while ZeroTier gives no answer. The service is stopped, or
+    /// the account cannot read the token of ZeroTier.
+    /// </summary>
+    /// <remarks>
+    /// The text names the one action that repairs the common cause, and it
+    /// uses the words of ZeroTierCheck: that check names the Services list of
+    /// Windows and the service ZeroTier One. The player reads the row for the
+    /// other cause.
+    ///
+    /// The last sentence holds because the lobby service reads ZeroTier every
+    /// cycle. So the player chooses no button after he starts the service.
+    /// </remarks>
+    private const string NoZeroTierTitle =
+        "The app cannot reach ZeroTier. It sees no player, and it announces no race. "
+        + "Start the ZeroTier One service in the Services list of Windows. "
+        + "The app then finds the network again.";
+
+    /// <summary>
+    /// The title while ZeroTier answers and this computer holds no address on
+    /// the network of the group.
+    /// </summary>
+    /// <remarks>
+    /// The window cannot name the action here, because the cause can be a
+    /// network that this computer never joined, an owner who has not approved
+    /// this computer, or a configuration that ZeroTier is still asking for.
+    /// ZeroTierCheck names each of those and gives the fix for it. So this
+    /// text sends the player to that one check, and it says "then", because a
+    /// row that passed earlier does not hold any more.
+    /// </remarks>
+    private const string NoAddressTitle =
+        "This computer has no address on the ZeroTier network. "
+        + "The app sees no player, and it announces no race. "
+        + "Choose Check again in the Setup list above. "
+        + "The ZeroTier row then names the reason and the fix.";
+
+    /// <summary>
+    /// The label of the launch button for the host, while the app has started
+    /// no game for him. The host starts the race, so the button can name the
+    /// race.
     /// </summary>
     private const string StartRaceLabel = "Start the race";
 
     /// <summary>
-    /// The label of the launch button for a player who joins. That player does
-    /// not start the race, so the button names the game only. The window also
-    /// shows this label while the button waits for Host or Join, because the
-    /// label is true for every player who starts MM2.
+    /// The label of the launch button for a player who joins, while the app
+    /// has started no game for him. That player does not start the race, so
+    /// the button names the game only. The window also shows this label while
+    /// the button waits for Host or Join, because the label is true for every
+    /// player who starts MM2.
     /// </summary>
     private const string StartGameLabel = "Start the game";
+
+    /// <summary>
+    /// The label of the launch button after the app started a game for this
+    /// player.
+    /// </summary>
+    /// <remarks>
+    /// The button is no step of the race any more: Host or Join gave the
+    /// player his game on the lobby path, and the launch button gave it to him
+    /// on the fallback path. One job is left, and the owner asked for it: MM2
+    /// stops, and the player starts it again without a new Host. So the label
+    /// names that job and promises no first start.
+    /// </remarks>
+    private const string StartAgainLabel = "Start the game again";
+
+    /// <summary>
+    /// The label of the Host button while the lobby path is open. One press
+    /// announces the race and starts the game in it, so the label names both.
+    /// </summary>
+    private const string HostAndPlayLabel = "Host a race and start the game";
+
+    /// <summary>
+    /// The label of the Join button while the lobby path is open. The game
+    /// reaches the race of the host, and this player starts no race, so the
+    /// label names the game.
+    /// </summary>
+    private const string JoinAndPlayLabel = "Join the host and start the game";
+
+    /// <summary>
+    /// The message after a press of Host or Join whose lobby launch gave no
+    /// race.
+    /// </summary>
+    /// <remarks>
+    /// The press starts no game in this state. MM2 covers the whole screen,
+    /// and the player must read the address of the race before that. So the
+    /// window keeps the two steps here, and this message names the button that
+    /// takes the second one.
+    /// </remarks>
+    private const string NoRaceMessage = "MM2 Lobby did not start the game in the race.";
 
     /// <summary>
     /// The message for a player who joined a host that then stopped. The app
@@ -65,6 +165,12 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private const string SavedNetworkIdMessage =
         "The app saved the network ID. Choose Check again to start the lobby.";
 
+    /// <summary>
+    /// The message of an ordinary start. The app showed this sentence before
+    /// the lobby path existed, and it shows the same sentence after a fallback.
+    /// </summary>
+    private const string OrdinaryStartMessage = "MM2 started. Follow the steps above.";
+
     private static readonly string[] NoSteps = Array.Empty<string>();
 
     /// <summary>
@@ -84,6 +190,24 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         Join,
     }
 
+    /// <summary>
+    /// What the last press of the launch button did. The steps follow this
+    /// value, because a step that names the wrong path is a lie: a game that
+    /// the lobby put in the race asks the player for no address, and a game
+    /// that the app started the ordinary way asks him for one.
+    /// </summary>
+    private enum LaunchPath
+    {
+        /// <summary>The player pressed the launch button never, or not since the role changed.</summary>
+        None,
+
+        /// <summary>The DirectPlay lobby started the game in the race.</summary>
+        Lobby,
+
+        /// <summary>The app started the game, and the player types the address.</summary>
+        Ordinary,
+    }
+
     private readonly ILobbyEnvironment _environment;
     private readonly IWindowHost _host;
     private readonly IReadOnlyList<CheckEntry> _checks;
@@ -92,24 +216,38 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private LobbyService? _lobby;
     private IDisposable? _poll;
     private bool _preflightPassed;
+    private bool _advisoryChecksPassed;
     private bool _disposed;
+
+    /// <summary>
+    /// The live session of the last lobby launch that worked. The app holds
+    /// one session, because one game runs. ILobbySession holds the DirectPlay
+    /// interface and the memory that the game reads, so the window keeps this
+    /// object for as long as the game may run.
+    /// </summary>
+    private ILobbySession? _session;
 
     private string _displayName = string.Empty;
     private string _networkId = string.Empty;
     private string _networkIdMessage = string.Empty;
-    private string _hostTitle = NoHostTitle;
+    // The window holds no lobby service before StartAsync runs, so it starts
+    // with the title of that state.
+    private string _hostTitle = NoLobbyTitle;
     private string _hostAddress = string.Empty;
     private string _hostButtonText = HostLabel;
+    private string _joinButtonText = JoinLabel;
     private string _startGameButtonText = StartGameLabel;
     private string _statusMessage = string.Empty;
     private string _fixMessage = string.Empty;
     private string _faultMessage = string.Empty;
+    private string _launchReport = string.Empty;
     private bool _setupExpanded = true;
     private bool _canHost;
     private bool _canJoin;
     private bool _canStartGame;
     private bool _busy;
     private LaunchRole _role = LaunchRole.None;
+    private LaunchPath _path = LaunchPath.None;
 
     public LobbyViewModel(ILobbyEnvironment environment, IWindowHost host)
     {
@@ -126,6 +264,8 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         // ZeroTier check then reports the fault, and the player sees the text
         // that caused it.
         _networkId = environment.Config.ZeroTierNetworkId;
+
+        ReportMessage = TheReportLine(environment);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -231,6 +371,13 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         private set => Set(ref _hostButtonText, value);
     }
 
+    /// <summary>The label of the Join button.</summary>
+    public string JoinButtonText
+    {
+        get => _joinButtonText;
+        private set => Set(ref _joinButtonText, value);
+    }
+
     public bool CanHost
     {
         get => _canHost;
@@ -245,8 +392,8 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     /// <summary>
     /// True while the window accepts the launch button. The player presses
-    /// Host or Join first, because the app shows the address of the race
-    /// before MM2 covers the screen.
+    /// Host or Join first: that press takes his role, and on the lobby path it
+    /// already gives him the game.
     /// </summary>
     public bool CanStartGame
     {
@@ -331,6 +478,38 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool HasFaultMessage => _faultMessage.Length > 0;
 
+    /// <summary>
+    /// The trail of calls of the last lobby launch. The window keeps this text
+    /// behind a panel that the player opens, because the step of a failed
+    /// launch asks him to send a report to the person who runs the group. Only
+    /// this text holds the answer of each DirectPlay call.
+    /// </summary>
+    public string LaunchReport
+    {
+        get => _launchReport;
+        private set
+        {
+            if (Set(ref _launchReport, value)) OnPropertyChanged(nameof(HasLaunchReport));
+        }
+    }
+
+    public bool HasLaunchReport => _launchReport.Length > 0;
+
+    /// <summary>
+    /// The line that names the file of the report. The player sends that file,
+    /// so the player must find it.
+    /// </summary>
+    /// <remarks>
+    /// The line also names a report that the last close could not write. The
+    /// window is gone at the moment of that failure, so no line of it reaches
+    /// the player then, and a dialog would stop a player who is closing the
+    /// app. The configuration file carries the reason to this start.
+    ///
+    /// The value never changes while the app runs, so this property needs no
+    /// setter and no event.
+    /// </remarks>
+    public string ReportMessage { get; }
+
     /// <summary>Runs the checks and starts the lobby. The window calls this method once.</summary>
     public Task StartAsync() => StartFromAButtonAsync();
 
@@ -409,9 +588,13 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     /// others.
     /// </summary>
     /// <remarks>
-    /// This method does not start MM2. MM2 covers the whole screen, and the
-    /// host must read his address and give it to the others first. The launch
-    /// button starts MM2.
+    /// This method starts the game as well, while the lobby path is open. One
+    /// press then plays: the lobby gives the address to the game, so the host
+    /// reads no address and gives no address to anybody.
+    ///
+    /// While that path is shut, this method starts no game. MM2 covers the
+    /// whole screen, and the host must read his address and give it to the
+    /// others first. The launch button then starts MM2.
     /// </remarks>
     public async Task HostAsync()
     {
@@ -424,49 +607,87 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             // The race ended. A live launch button would start MM2 for a race
             // that nobody hosts.
-            _role = LaunchRole.None;
+            TakeTheRole(LaunchRole.None);
             RefreshStatus();
             return;
         }
+
+        // The app cannot announce a race while it reaches no network, and a
+        // race that nobody hears is no race. The button is already off in that
+        // state, and this gate holds a click that arrived after the change.
+        if (!TheAppSeesTheNetwork()) return;
 
         lobby.StartHosting();
 
         // This player is the host now. A Join that came first does not hold
         // any more, so this line also takes that role away.
-        _role = LaunchRole.Host;
+        TakeTheRole(LaunchRole.Host);
         RefreshStatus();
 
-        // MyAddress is null until a cycle reads the ZeroTier network. The app
-        // copies nothing in that state, and HostTitle tells the player to
-        // wait.
+        // The copy runs before the launch, because the launch writes the
+        // message that answers the press. A friend whose own lobby path is
+        // shut still needs this address, and the window shows it in a large
+        // font as well.
         StatusMessage = lobby.MyAddress is { } address
             ? await CopyTheAddressAsync(address)
             : string.Empty;
+
+        // One press plays. The lobby launch needs no address from the player,
+        // so the second press that this app asked for is gone.
+        StartTheRaceOnThisPress();
     }
 
     /// <summary>
-    /// Copies the address of the host. The player types that address into MM2,
-    /// because MM2 can refuse Ctrl+V.
+    /// Takes the role of a player who joins the race of the host, and copies
+    /// the address of that host.
     /// </summary>
     /// <remarks>
-    /// This method does not start MM2, for the reason that HostAsync gives.
-    /// The launch button starts MM2.
+    /// This method starts the game as well, while the lobby path is open. One
+    /// press then plays, and the player types no address.
+    ///
+    /// While that path is shut, this method starts no game, for the reason
+    /// that HostAsync gives. The player then types the address into MM2,
+    /// because MM2 can refuse Ctrl+V.
     /// </remarks>
     public async Task JoinAsync()
     {
         var address = _lobby?.CurrentHost?.Address?.ToString();
         if (address is null || _busy) return;
 
-        _role = LaunchRole.Join;
+        // The gate of Host, for the reason that HostAsync gives. The app
+        // cannot reach that address while it reaches no network.
+        if (!TheAppSeesTheNetwork()) return;
+
+        TakeTheRole(LaunchRole.Join);
+
+        // The role changed, so the steps of the last launch do not hold.
+        ShowTheSteps(TheStepsForNow());
         UpdateTheButtons();
 
         StatusMessage = await CopyTheAddressAsync(address);
+
+        // One press plays, for the reason that HostAsync gives.
+        StartTheRaceOnThisPress();
     }
 
     /// <summary>
-    /// Starts MM2. The player presses Host or Join first, reads the address
-    /// that the window shows, and gives that address to the others. Then this
-    /// method covers the screen with the game.
+    /// Starts MM2 from the launch button. The player presses Host or Join
+    /// first. On the fallback path he then reads the address that the window
+    /// shows, and this method covers the screen with the game. On the lobby
+    /// path his first press already played, and this method starts the game
+    /// again.
+    /// <para>
+    /// The method takes the lobby path when the app can take it, and it takes
+    /// the ordinary path in every other case. The window then shows the steps
+    /// of the path that it took.
+    /// </para>
+    /// <para>
+    /// WARNING: call this method on the thread that holds the window. The
+    /// launcher calls CoInitializeEx with COINIT_APARTMENTTHREADED, and
+    /// Program.Main marks that thread STAThread. A thread from the pool joins
+    /// the other apartment, and Windows then gives the DirectPlay interface to
+    /// an apartment that ends with the work item.
+    /// </para>
     /// </summary>
     public void StartGame()
     {
@@ -474,10 +695,14 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         // click that arrives after the state changed must start nothing.
         if (_role == LaunchRole.None || !_preflightPassed || _lobby is null || _busy) return;
 
+        // A game on a network that the app cannot reach races against nobody.
+        if (!TheAppSeesTheNetwork()) return;
+
         // The button stays on after this launch, and this method does not
         // refuse a second press. MM2 is flaky and it sometimes stops, so the
         // player must be able to start it again. A guard here would cost him
-        // his place in the lobby.
+        // his place in the lobby. The label of the button says so after the
+        // first start: it reads "Start the game again".
         StartTheGame();
     }
 
@@ -512,33 +737,41 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         var lobby = _lobby;
         var host = lobby?.CurrentHost;
 
-        if (lobby is not null && lobby.IsHosting)
+        if (!TheAppSeesTheNetwork())
+        {
+            // The app reaches no friend and it announces nothing. So it says
+            // what it cannot do, and it asserts nothing about a race. The
+            // address goes too: the address of a host belongs to a race that
+            // the app can no longer see.
+            HostTitle = TheTitleWithNoNetwork();
+            HostAddress = string.Empty;
+        }
+        else if (lobby is not null && lobby.IsHosting)
         {
             // CurrentHost never returns this machine. So the window reads
             // IsHosting and MyAddress to show the race of this player.
             //
-            // MyAddress is null until a cycle reads the ZeroTier network. The
-            // window must not ask the player for an address that the window
-            // does not show.
+            // MyAddress carries a value here, because the branch above reads
+            // the reach and the reach needs that address. The two reads go to
+            // two fields all the same, and the pump thread writes both. So a
+            // cycle that drops the network between them leaves MyAddress null
+            // for one read, and the window must not ask the player for an
+            // address that it does not show. The next read names the state.
             HostAddress = lobby.MyAddress ?? string.Empty;
             HostTitle = HostAddress.Length > 0
                 ? "You host this race. Give the address to the others."
                 : "You host this race. The app does not have your address yet. "
                     + "Wait a moment.";
-
-            ShowTheSteps(JoinInstructions.ForHost());
         }
         else if (host?.Address is not null)
         {
             HostTitle = $"{host.DisplayName} hosts this race.";
             HostAddress = host.Address.ToString();
-            ShowTheSteps(JoinInstructions.For(host.Address.ToString()));
         }
         else
         {
             HostTitle = NoHostTitle;
             HostAddress = string.Empty;
-            ShowTheSteps(NoSteps);
 
             // The host of this player stopped the race. That address now
             // belongs to a race that ended, so the launch button goes away.
@@ -546,16 +779,235 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
             // message gives him the reason.
             if (_role == LaunchRole.Join)
             {
-                _role = LaunchRole.None;
+                TakeTheRole(LaunchRole.None);
                 StatusMessage = HostStoppedMessage;
             }
         }
+
+        // One method answers for the steps, and the window calls it on every
+        // cycle. So a launch that needed no address cannot lose its steps two
+        // seconds later.
+        ShowTheSteps(TheStepsForNow());
 
         FaultMessage = lobby?.LastCycleFault is { } fault
             ? $"The last refresh failed: {fault.Message}"
             : string.Empty;
 
         UpdateTheButtons();
+    }
+
+    /// <summary>
+    /// True while the app holds a lobby service that reaches the virtual
+    /// network. Every announcement needs that network, so this one condition
+    /// answers for Host, for Join, for the launch button, for the title and
+    /// for the steps.
+    /// </summary>
+    private bool TheAppSeesTheNetwork()
+        => _lobby?.Reach == ZeroTierReach.OnTheNetwork;
+
+    /// <summary>
+    /// Names what the app cannot reach. Each state takes its own sentence,
+    /// because each one sends the player to another place.
+    /// </summary>
+    private string TheTitleWithNoNetwork()
+    {
+        var lobby = _lobby;
+        if (lobby is null) return NoLobbyTitle;
+
+        return lobby.Reach == ZeroTierReach.NoAnswer ? NoZeroTierTitle : NoAddressTitle;
+    }
+
+    /// <summary>
+    /// Gives the steps that hold now. The list follows the state of the lobby
+    /// and the path of the last launch.
+    /// </summary>
+    /// <remarks>
+    /// The window must never tell the player to do something that the path
+    /// does not need. After a lobby launch the game sits in the race already,
+    /// and the step "Type the host address" would be false. After an ordinary
+    /// launch that step is the one that the player needs most.
+    /// </remarks>
+    private IReadOnlyList<string> TheStepsForNow()
+    {
+        var lobby = _lobby;
+
+        // Every step names an action inside a race. The app cannot promise a
+        // race while it reaches no friend, so it asks the player for nothing.
+        if (!TheAppSeesTheNetwork()) return NoSteps;
+
+        if (lobby is not null && lobby.IsHosting)
+        {
+            return _path == LaunchPath.Lobby
+                ? JoinInstructions.ForTheHostInTheRace()
+                : JoinInstructions.ForHost();
+        }
+
+        if (lobby?.CurrentHost?.Address is { } address)
+        {
+            return _path == LaunchPath.Lobby
+                ? JoinInstructions.ForThePlayerInTheRace()
+                : JoinInstructions.For(address.ToString());
+        }
+
+        return NoSteps;
+    }
+
+    /// <summary>
+    /// Writes the role of the player, and forgets the path of the last launch.
+    /// </summary>
+    /// <remarks>
+    /// The steps follow that path. A player who hosted through the lobby, then
+    /// stopped the race, and then joined another host would otherwise still
+    /// read that the game sits in a race. He must press the launch button
+    /// again, and the window must ask nothing of him until he does.
+    /// </remarks>
+    private void TakeTheRole(LaunchRole role)
+    {
+        _role = role;
+        _path = LaunchPath.None;
+    }
+
+    /// <summary>
+    /// Takes the text of the two boxes, then writes the report of this
+    /// session. The window calls this method while it closes.
+    /// </summary>
+    /// <remarks>
+    /// The order of the two steps is the rule of this method. Each binding
+    /// writes when its box loses the focus, and a player who types in a box
+    /// and then closes the window never gives it that focus. So the name of
+    /// the player reaches the file first, and that save is the one that
+    /// matters. WriteTheReport comes second and it throws nothing, so a report
+    /// that fails cannot take the name of the player with it, and it cannot
+    /// stop the app from closing.
+    ///
+    /// The window calls this method before it tears the lobby down. The
+    /// report therefore holds the list of players and the title that the
+    /// player saw, and not the empty list of a window that already stopped.
+    /// </remarks>
+    /// <param name="displayName">The text of the name box.</param>
+    /// <param name="networkId">The text of the network ID box.</param>
+    public void OnTheWindowClosing(string displayName, string networkId)
+    {
+        DisplayName = displayName;
+        ZeroTierNetworkId = networkId;
+
+        WriteTheReport();
+    }
+
+    /// <summary>
+    /// Writes the report of this session, and remembers a write that failed.
+    /// This method throws nothing.
+    /// </summary>
+    /// <remarks>
+    /// WARNING: a failure here must never stop the app from closing. So the
+    /// catch below takes every type of exception, and not the two types that
+    /// a file write usually throws. A report is worth less than the app that
+    /// the player closes.
+    ///
+    /// The player reads no line of the window at this moment. So the reason
+    /// goes to the configuration file, and the window shows it at the next
+    /// start. The player can therefore learn that the app wrote no file, and
+    /// the app interrupts nobody at the close.
+    /// </remarks>
+    private void WriteTheReport()
+    {
+        string fault;
+
+        try
+        {
+            _environment.WriteReport(QuitReport.Build(TheFacts()));
+            fault = string.Empty;
+        }
+        catch (Exception e)
+        {
+            fault = e.Message;
+        }
+
+        RememberTheReportFault(fault);
+    }
+
+    /// <summary>
+    /// Writes the reason of a failed report to the one configuration object
+    /// and saves the file. A write that worked takes an older reason away,
+    /// because a line that names a failure of last week is a lie.
+    /// </summary>
+    private void RememberTheReportFault(string fault)
+    {
+        var config = _environment.Config;
+
+        // The binding of a box saves on every loss of the focus, and this
+        // method follows that rule: the same value must not write the file
+        // again.
+        if (config.LastReportFault == fault) return;
+
+        config.LastReportFault = fault;
+
+        try
+        {
+            _environment.SaveConfig();
+        }
+        catch (Exception)
+        {
+            // The name of the player already reached the file, in the step
+            // above this one. This save carries the reason of a failed report
+            // and nothing else, so a failure here costs the player nothing
+            // that they typed.
+        }
+    }
+
+    /// <summary>
+    /// Reads the facts of the report off the window. Every value here is a
+    /// value that the window shows on screen.
+    /// </summary>
+    private QuitReportFacts TheFacts() => new()
+    {
+        Time = _environment.Now,
+        AppVersion = _environment.AppVersion,
+        PlayerName = _displayName,
+        NetworkId = _networkId,
+        CanStartTheGameInTheRace = TheLobbyPathIsOpen(),
+        Reach = TheReachInWords(),
+        Title = _hostTitle,
+        Address = _hostAddress,
+        Checks = CheckRows.ToList(),
+        Players = PeerRows.ToList(),
+        StatusMessage = _statusMessage,
+        FaultMessage = _faultMessage,
+        LaunchReport = _launchReport,
+    };
+
+    /// <summary>
+    /// Names what the app reached. Each state takes its own sentence, as the
+    /// title of the host panel does: a report that said "on the network" for
+    /// every state would send a reader to look for a friend while the fault
+    /// sat on this computer.
+    /// </summary>
+    private string TheReachInWords()
+    {
+        if (_lobby is not { } lobby) return "The app has not started the lobby.";
+
+        return lobby.Reach switch
+        {
+            ZeroTierReach.OnTheNetwork => "The app is on the network.",
+            ZeroTierReach.NoAnswer => "The app cannot reach ZeroTier.",
+            _ => "This computer has no address on the network.",
+        };
+    }
+
+    /// <summary>
+    /// Builds the line that the window shows about the report. The line names
+    /// the path, and it names a write that the last close could not do.
+    /// </summary>
+    private static string TheReportLine(ILobbyEnvironment environment)
+    {
+        var line = $"The app writes a report to {environment.ReportPath} when you close "
+            + "this window. Send that file to the person who runs the group.";
+
+        var fault = environment.Config.LastReportFault;
+
+        return fault.Length == 0
+            ? line
+            : $"The app did not write the report when it closed last time: {fault} {line}";
     }
 
     public async ValueTask DisposeAsync()
@@ -565,6 +1017,14 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         _shutdown.Cancel();
         await StopTheLobbyAsync();
+
+        // The session goes last, and it goes on the thread that closed the
+        // window. The same thread called Launch, so the release reaches the
+        // apartment that holds the DirectPlay interface. A session whose game
+        // still runs releases nothing, and the process ends in any case.
+        _session?.Dispose();
+        _session = null;
+
         _shutdown.Dispose();
     }
 
@@ -651,7 +1111,14 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         // A new service hosts nothing, and it knows no host. So the role of
         // the player goes with the old service, and the launch button waits
         // for Host or Join again.
-        _role = LaunchRole.None;
+        TakeTheRole(LaunchRole.None);
+
+        // The service of the old title is gone. Without this read the window
+        // keeps the title of that service, and "No one hosts a race now."
+        // then stands over a lobby that no longer runs. The read comes before
+        // the dispose, because nothing of this window needs the old service
+        // any more.
+        RefreshStatus();
 
         if (lobby is null) return;
 
@@ -674,11 +1141,27 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             ShowTheChecks(results);
             _preflightPassed = PreflightRunner.AllPassed(results);
-            SetupExpanded = !_preflightPassed;
+
+            // The advisory checks buy the lobby path and nothing else, so the
+            // window reads them here and PreflightRunner.AllPassed reads the
+            // blocking results. A list that holds no advisory check gives
+            // true, as an empty list does.
+            _advisoryChecksPassed = results
+                .Where(result => !result.Blocks)
+                .All(result => result.Status == CheckStatus.Pass);
+
+            // The panel opens for an advisory check too, and only the gate on
+            // Host and Join lets that check go. A panel that closed over an
+            // advisory row would hide the one thing that the app offers the
+            // player, and no player would ever press that Fix.
+            SetupExpanded = results.Any(result => result.Status != CheckStatus.Pass);
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
+            // No test can see the second line, for the reason that
+            // MarkTheChecksStale gives. Both flags go together all the same.
             _preflightPassed = false;
+            _advisoryChecksPassed = false;
         }
     }
 
@@ -722,31 +1205,260 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private void UpdateTheButtons()
     {
         var lobby = _lobby;
-        var ready = _preflightPassed && lobby is not null && !_busy;
+        var started = _preflightPassed && lobby is not null && !_busy;
 
-        CanHost = ready;
+        // The window does not offer an action that it knows cannot work. While
+        // the app reaches no network, an announcement reaches nobody and a game
+        // races against nobody. The title names the reason, because a button
+        // that goes grey tells the player nothing.
+        var ready = started && TheAppSeesTheNetwork();
+
+        // The stop of a race needs no network. A player who cannot stop his own
+        // race keeps a row that promises a race to nobody.
+        CanHost = ready || (started && lobby!.IsHosting);
         CanJoin = ready && !lobby!.IsHosting && lobby.CurrentHost?.Address is not null;
-        HostButtonText = lobby?.IsHosting == true ? StopLabel : HostLabel;
+        HostButtonText = TheHostLabel();
+        JoinButtonText = TheJoinLabel();
 
         // The launch button carries the gate of Host and Join, and it also
         // waits for one of those two presses.
         CanStartGame = ready && _role != LaunchRole.None;
-        StartGameButtonText = _role == LaunchRole.Host ? StartRaceLabel : StartGameLabel;
+        StartGameButtonText = TheLaunchLabel();
     }
 
+    /// <summary>
+    /// Gives the label of the Host button. One press plays while the lobby
+    /// path is open, and the label follows that.
+    /// </summary>
+    private string TheHostLabel()
+    {
+        if (_lobby?.IsHosting == true) return StopLabel;
+
+        return TheLobbyPathIsOpen() ? HostAndPlayLabel : HostLabel;
+    }
+
+    /// <summary>Gives the label of the Join button, for the reason above.</summary>
+    private string TheJoinLabel() => TheLobbyPathIsOpen() ? JoinAndPlayLabel : JoinLabel;
+
+    /// <summary>
+    /// Gives the label of the launch button. The label follows the game and
+    /// not the path: after any start, the one job of this button is a second
+    /// start.
+    /// </summary>
+    private string TheLaunchLabel()
+    {
+        if (_path != LaunchPath.None) return StartAgainLabel;
+
+        return _role == LaunchRole.Host ? StartRaceLabel : StartGameLabel;
+    }
+
+    /// <summary>
+    /// Starts the game from the launch button. This method gives the player a
+    /// game in every case: the race through the lobby, or the ordinary start
+    /// with the address on the screen.
+    /// </summary>
     private void StartTheGame()
+    {
+        var result = TryTheRace();
+
+        if (!TookTheRace(result))
+        {
+            // The app does what it did before the lobby path existed. The
+            // window shows the address, and the player types it into MM2. No
+            // player is worse off than he was.
+            _path = LaunchPath.Ordinary;
+            StatusMessage = StartTheGameTheOrdinaryWay() + AdviceOf(result);
+        }
+
+        AfterAPress();
+    }
+
+    /// <summary>
+    /// Starts the game from a press of Host or Join. The press plays only
+    /// through the lobby, which needs no address from the player.
+    /// </summary>
+    /// <remarks>
+    /// This method starts MM2 the ordinary way for nobody. The ordinary start
+    /// covers the screen with the game, and the player must read the address
+    /// of the race first. That is the one reason that the two steps ever
+    /// existed, so a press that cannot give the race leaves the two steps and
+    /// names the button of the second one.
+    /// </remarks>
+    private void StartTheRaceOnThisPress()
+    {
+        // The gate of the launch button, and the gate of the labels of Host
+        // and Join. So a button that promises a game keeps that promise.
+        if (!_preflightPassed || !TheLobbyPathIsOpen()) return;
+
+        var result = TryTheRace();
+
+        if (!TookTheRace(result)) StatusMessage = TheMessageWithNoRace(result);
+
+        AfterAPress();
+    }
+
+    /// <summary>
+    /// Keeps the session of a launch that worked, and writes the message of
+    /// that launch. It returns false when the game did not reach the race.
+    /// </summary>
+    private bool TookTheRace(LobbyLaunchResult? result)
+    {
+        if (result is not { Started: true, Session: { } session }) return false;
+
+        // The app holds this session for as long as the game may run. It owns
+        // the DirectPlay interface and the memory that MM2 reads about three
+        // seconds after the launch.
+        _session = session;
+        _path = LaunchPath.Lobby;
+        StatusMessage = result.Message;
+        return true;
+    }
+
+    /// <summary>
+    /// Gives the message of a press that reached no race. The text names the
+    /// launch button with the label that the button carries now, so the player
+    /// reads the words that he sees.
+    /// </summary>
+    private string TheMessageWithNoRace(LobbyLaunchResult? result)
+        => NoRaceMessage + AdviceOf(result)
+            + $" Read the address above. Then choose {TheLaunchLabel()}.";
+
+    /// <summary>
+    /// Shows the steps and the labels of the state that a press left behind.
+    /// </summary>
+    /// <remarks>
+    /// The steps follow the path that the press took. Without them the window
+    /// could ask a player to type an address that the lobby already gave to
+    /// the game. The labels follow the same path: the launch button offers a
+    /// second start after a start, and it offers the first start before one.
+    /// </remarks>
+    private void AfterAPress()
+    {
+        ShowTheSteps(TheStepsForNow());
+        UpdateTheButtons();
+    }
+
+    /// <summary>
+    /// Asks the launcher to start MM2 in the race. It returns null when the
+    /// app asked nothing, and the window then says nothing about a path that
+    /// it did not take.
+    /// </summary>
+    private LobbyLaunchResult? TryTheRace()
+    {
+        if (!TheLobbyPathIsOpen()) return null;
+
+        if (!TheSessionIsFree()) return null;
+
+        var launcher = _environment.LobbyLauncher;
+
+        var request = TheRequest();
+        if (request is null) return null;
+
+        try
+        {
+            var result = launcher.Launch(request);
+            LaunchReport = result.Detail;
+            return result;
+        }
+        catch (Exception e)
+        {
+            // The launcher promises to throw nothing. The window catches all
+            // the same, because an exception here would take the ordinary
+            // start away too, and the player would get no game at all.
+            LaunchReport = $"The launcher threw {e.GetType().Name}: {e.Message}";
+            return LobbyLaunchResult.Failure(LobbyLaunchFault.Unexpected, LaunchReport);
+        }
+    }
+
+    /// <summary>
+    /// True while the app knows that it can put the game in the race. The
+    /// window reads this value before a press, for the labels of Host and
+    /// Join, and after a press, for the path that the press takes. So a label
+    /// cannot promise a path that the press does not take.
+    /// </summary>
+    /// <remarks>
+    /// The two advisory checks buy this path and nothing else. A row that does
+    /// not pass already names the reason and offers the Fix, so the window
+    /// adds no second message for it.
+    ///
+    /// The launcher answers for this computer and this process: Windows, the
+    /// bit width, and the DirectPlay component. A false answer means that this
+    /// path never opens, so the window stays quiet about it.
+    /// </remarks>
+    private bool TheLobbyPathIsOpen()
+        => _advisoryChecksPassed && _environment.LobbyLauncher.CanLaunch;
+
+    /// <summary>
+    /// Builds the request for the role of this player. The app reads the
+    /// address of the host from the announcement, so the player types nothing.
+    /// </summary>
+    private LobbyLaunchRequest? TheRequest()
+    {
+        if (_role == LaunchRole.Host) return LobbyLaunchRequest.ToHost(_displayName);
+
+        var address = _lobby?.CurrentHost?.Address?.ToString();
+
+        return address is null ? null : LobbyLaunchRequest.ToJoin(address, _displayName);
+    }
+
+    /// <summary>
+    /// Closes the session of an earlier launch. It returns true when the app
+    /// holds no session any more.
+    /// </summary>
+    /// <remarks>
+    /// The launch button takes no guard against a second press. MM2 stops, and
+    /// the player must start it again without a new Host, because a new Host
+    /// would cost him his place in the lobby. So the bound on the sessions
+    /// lives here and not on the button.
+    ///
+    /// A session releases the DirectPlay interface only after the game process
+    /// ends. The press that follows a crash therefore finds no game, the old
+    /// session closes, and the app takes one new session in its place. A press
+    /// while the game still runs closes nothing, and the app then starts the
+    /// game the ordinary way. The app holds one session in every case.
+    /// </remarks>
+    private bool TheSessionIsFree()
+    {
+        if (_session is null) return true;
+
+        _session.Dispose();
+
+        if (_session.IsOpen) return false;
+
+        _session = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Starts MM2 the way that the app started it before the lobby path
+    /// existed. It returns the message for the player.
+    /// </summary>
+    private string StartTheGameTheOrdinaryWay()
     {
         var path = _environment.Config.GamePath;
 
         try
         {
             _environment.LaunchGame(path);
-            StatusMessage = "MM2 started. Follow the steps above.";
+            return OrdinaryStartMessage;
         }
         catch (Exception e)
         {
-            StatusMessage = $"MM2 did not start: {e.Message}";
+            return $"MM2 did not start: {e.Message}";
         }
+    }
+
+    /// <summary>
+    /// Gives the text of a lobby launch that failed. It gives an empty text
+    /// when the app made no attempt.
+    /// </summary>
+    private static string AdviceOf(LobbyLaunchResult? result)
+    {
+        if (result is null) return string.Empty;
+
+        return result.PlayerAction is { } action
+            ? $" {result.Message} {action}"
+            : $" {result.Message}";
     }
 
     /// <summary>
@@ -838,6 +1550,14 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     private void MarkTheChecksStale()
     {
         _preflightPassed = false;
+
+        // No test can see this line, because _preflightPassed gates the launch
+        // button first and the line above already took that away. The line
+        // stands here all the same: the rule of this method is that no result
+        // of the last run holds, and a reader must not have to prove the
+        // exception for one of the six checks.
+        _advisoryChecksPassed = false;
+
         UpdateTheButtons();
 
         if (CheckRows.Count == 0) return;

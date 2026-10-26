@@ -76,6 +76,48 @@ public class GameLauncherTests
     }
 
     [Fact]
+    public void The_steps_of_the_race_tell_the_host_that_he_types_no_address()
+    {
+        // The lobby gave the address to the game. A step that named a menu of
+        // MM2 would ask the host for an action that the game does not offer.
+        var steps = JoinInstructions.ForTheHostInTheRace();
+
+        Assert.Equal(2, steps.Count);
+        Assert.Contains("no address", steps[0]);
+        Assert.Contains("Pick a city", steps[1]);
+        Assert.DoesNotContain(steps, step => step.Contains("Multiplayer"));
+    }
+
+    [Fact]
+    public void The_steps_of_the_race_tell_a_player_who_joined_to_wait()
+    {
+        var steps = JoinInstructions.ForThePlayerInTheRace();
+
+        Assert.Equal(2, steps.Count);
+        Assert.Contains("no address", steps[0]);
+        Assert.Contains("Wait for the host", steps[1]);
+        Assert.DoesNotContain(steps, step => step.Contains("Type"));
+    }
+
+    [Fact]
+    public void Every_list_of_steps_differs_from_every_other_list()
+    {
+        // The window chooses one list for each path. Two lists that read the
+        // same would hide a window that chose the wrong one.
+        var lists = new[]
+        {
+            JoinInstructions.For("10.147.17.42"),
+            JoinInstructions.ForHost(),
+            JoinInstructions.ForTheHostInTheRace(),
+            JoinInstructions.ForThePlayerInTheRace(),
+        };
+
+        var texts = lists.Select(list => string.Join("|", list)).ToList();
+
+        Assert.Equal(lists.Length, texts.Distinct().Count());
+    }
+
+    [Fact]
     public void BuildPlan_rejects_a_path_with_no_folder()
     {
         Assert.Throws<ArgumentException>(

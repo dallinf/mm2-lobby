@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.Time.Testing;
 using Mm2Lobby.App;
 using Mm2Lobby.Core.Configuration;
+using Mm2Lobby.Core.Diagnostics;
 using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
@@ -93,6 +94,7 @@ public class LobbyEnvironmentTests : IDisposable
 
     private LobbyEnvironment BuildFromTheFile(TimeProvider? timeProvider) => new(
         Store,
+        new ReportStore(Path.Combine(_folder, "report.txt")),
         _zeroTier,
         _zeroTierCommand,
         () => _accountId,
@@ -298,13 +300,50 @@ public class LobbyEnvironmentTests : IDisposable
     }
 
     [Fact]
-    public void The_environment_builds_the_four_checks()
+    public void The_environment_builds_the_six_checks()
     {
+        // The two advisory checks stand last. Both read the game path, and
+        // the Midtown Madness 2 check writes that path.
         var names = Build().CreateChecks().Select(item => item.Check.Name).ToList();
 
         Assert.Equal(
-            new[] { "ZeroTier", "DirectPlay", "Midtown Madness 2", "Windows Firewall" },
+            new[]
+            {
+                "ZeroTier",
+                "DirectPlay",
+                "Midtown Madness 2",
+                "Windows Firewall",
+                "DirectPlay registration",
+                "Compatibility mode",
+            },
             names);
+    }
+
+    [Fact]
+    public void The_four_checks_that_block_the_lobby_still_block_it()
+    {
+        // These four checks name a condition that MM2 needs. A player with a
+        // failure in one of them cannot race at all, so the window must keep
+        // Host and Join off.
+        var blocking = Build().CreateChecks()
+            .Where(item => item.Check.Blocks)
+            .Select(item => item.Check.Name)
+            .ToList();
+
+        Assert.Equal(
+            new[] { "ZeroTier", "DirectPlay", "Midtown Madness 2", "Windows Firewall" },
+            blocking);
+    }
+
+    [Fact]
+    public void The_two_new_checks_give_advice_and_do_not_block_the_lobby()
+    {
+        var advisory = Build().CreateChecks()
+            .Where(item => !item.Check.Blocks)
+            .Select(item => item.Check.Name)
+            .ToList();
+
+        Assert.Equal(new[] { "DirectPlay registration", "Compatibility mode" }, advisory);
     }
 
     [Fact]
@@ -333,6 +372,18 @@ public class LobbyEnvironmentTests : IDisposable
 
         var plan = Assert.Single(_launcher.Plans);
         Assert.EndsWith(GameLocator.Executable, plan.ExecutablePath);
+    }
+
+    [Fact]
+    public void The_environment_gives_one_lobby_launcher()
+    {
+        // The launcher holds no state between calls, so one instance serves
+        // every press. A new instance for each read would also build a new
+        // allocator and read the registry route again.
+        var environment = Build();
+
+        Assert.NotNull(environment.LobbyLauncher);
+        Assert.Same(environment.LobbyLauncher, environment.LobbyLauncher);
     }
 
     [Fact]

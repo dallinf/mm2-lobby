@@ -23,6 +23,7 @@ public class ConfigStoreTests : IDisposable
             DisplayName = "dallin",
             GamePath = @"C:\Games\midtown2.exe",
             ZeroTierNetworkId = "0123456789abcdef",
+            LastReportFault = "the file is open in another program",
             RememberedNames = { ["bb11223344"] = "chris" },
         };
 
@@ -32,6 +33,7 @@ public class ConfigStoreTests : IDisposable
         Assert.Equal("dallin", loaded.DisplayName);
         Assert.Equal(@"C:\Games\midtown2.exe", loaded.GamePath);
         Assert.Equal("0123456789abcdef", loaded.ZeroTierNetworkId);
+        Assert.Equal("the file is open in another program", loaded.LastReportFault);
         Assert.Equal("chris", loaded.RememberedNames["bb11223344"]);
     }
 
@@ -84,6 +86,18 @@ public class ConfigStoreTests : IDisposable
 
         Assert.Equal(string.Empty, config.GamePath);
         Assert.Equal(string.Empty, config.ZeroTierNetworkId);
+    }
+
+    [Fact]
+    public void Load_treats_a_null_report_fault_as_empty()
+    {
+        // The window reads this value and shows it to the player. A null
+        // value would reach that line as no line at all, and the file of a
+        // player who installed an older version holds no value here.
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path_, """{"displayName":"x","lastReportFault":null}""");
+
+        Assert.Equal(string.Empty, new ConfigStore(Path_).Load().LastReportFault);
     }
 
     [Fact]

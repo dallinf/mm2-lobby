@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Time.Testing;
 using Mm2Lobby.App;
 using Mm2Lobby.Core.Configuration;
+using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
 using Mm2Lobby.Core.ZeroTier;
@@ -34,6 +35,26 @@ public sealed class FakeLobbyEnvironment : ILobbyEnvironment, IDisposable
     public string AppVersion { get; set; } = "1.0.0.0";
 
     public ConfigStore ConfigStore { get; }
+
+    public string ReportPath => Path.Combine(_folder, "report.txt");
+
+    /// <summary>The text of every report that the window wrote, in order.</summary>
+    public List<string> Reports { get; } = new();
+
+    /// <summary>The exception that WriteReport throws. A null value means no exception.</summary>
+    public Exception? ReportFault { get; set; }
+
+    /// <summary>
+    /// The display name that the configuration file held at each call of
+    /// WriteReport. A test reads this list to prove that the name of the
+    /// player reached the file before the app wrote the report.
+    /// </summary>
+    public List<string> NameInTheFileAtTheWrite { get; } = new();
+
+    /// <summary>The launcher that the window asks. A test scripts its answer.</summary>
+    public FakeLobbyLauncher Launcher { get; } = new();
+
+    ILobbyLauncher ILobbyEnvironment.LobbyLauncher => Launcher;
 
     public IZeroTierClient ZeroTier { get; set; } = new FakeZeroTierClient();
 
@@ -97,6 +118,15 @@ public sealed class FakeLobbyEnvironment : ILobbyEnvironment, IDisposable
         if (SaveFault is not null) throw SaveFault;
 
         ConfigStore.Save(Config);
+    }
+
+    public void WriteReport(string text)
+    {
+        NameInTheFileAtTheWrite.Add(ConfigStore.Load().DisplayName);
+
+        if (ReportFault is not null) throw ReportFault;
+
+        Reports.Add(text);
     }
 
     public void LaunchGame(string gamePath)

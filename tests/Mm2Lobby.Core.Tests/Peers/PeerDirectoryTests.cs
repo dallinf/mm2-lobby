@@ -9,6 +9,11 @@ public class PeerDirectoryTests
 {
     private const string MyNodeId = "a09acf0233";
 
+    private const string NetworkId = "88c5b1f33969ae66";
+
+    /// <summary>The first 10 characters of NetworkId.</summary>
+    private const string ControllerNodeId = "88c5b1f339";
+
     private static readonly IPNetwork Allowed =
         IPv4Math.Subnet(IPAddress.Parse("10.147.17.42"), 24);
 
@@ -45,7 +50,7 @@ public class PeerDirectoryTests
         Hear("bb11223344", "chris", "10.147.17.9");
         _zeroTier.Quality["bb11223344"] = LinkQuality.Direct;
 
-        var peers = await Build().GetPeersAsync(MyNodeId, NoNames, default);
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, NoNames, default);
 
         var peer = Assert.Single(peers);
         Assert.Equal("chris", peer.DisplayName);
@@ -64,7 +69,7 @@ public class PeerDirectoryTests
             ["cc55667788"] = "sam",
         };
 
-        var peers = await Build().GetPeersAsync(MyNodeId, remembered, default);
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, remembered, default);
 
         var peer = Assert.Single(peers);
         Assert.Equal("sam", peer.DisplayName);
@@ -82,7 +87,7 @@ public class PeerDirectoryTests
             ["dd99887766"] = "jo",
         };
 
-        var peers = await Build().GetPeersAsync(MyNodeId, remembered, default);
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, remembered, default);
 
         var peer = Assert.Single(peers);
         Assert.Equal("jo", peer.DisplayName);
@@ -96,7 +101,7 @@ public class PeerDirectoryTests
     {
         _zeroTier.Quality["cc55667788"] = LinkQuality.Relayed;
 
-        var peers = await Build().GetPeersAsync(MyNodeId, NoNames, default);
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, NoNames, default);
 
         Assert.Equal("cc55667788", Assert.Single(peers).DisplayName);
     }
@@ -111,7 +116,7 @@ public class PeerDirectoryTests
             [MyNodeId] = "dallin",
         };
 
-        Assert.Empty(await Build().GetPeersAsync(MyNodeId, remembered, default));
+        Assert.Empty(await Build().GetPeersAsync(MyNodeId, NetworkId, remembered, default));
     }
 
     [Fact]
@@ -125,7 +130,7 @@ public class PeerDirectoryTests
         };
 
         var peers = await Build().GetPeersAsync(
-            MyNodeId.ToUpperInvariant(), remembered, default);
+            MyNodeId.ToUpperInvariant(), NetworkId, remembered, default);
 
         Assert.Empty(peers);
     }
@@ -135,7 +140,7 @@ public class PeerDirectoryTests
     {
         Hear("ee11112222", "zoe", "10.147.17.11", hosting: true);
 
-        var peers = await Build().GetPeersAsync(MyNodeId, NoNames, default);
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, NoNames, default);
 
         var peer = Assert.Single(peers);
         Assert.True(peer.Hosting);
@@ -147,7 +152,7 @@ public class PeerDirectoryTests
     {
         Hear("bb11223344", "chris", "10.147.17.9");
 
-        var peers = await Build().GetPeersAsync(MyNodeId, NoNames, default);
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, NoNames, default);
 
         Assert.Equal(LinkQuality.Unknown, Assert.Single(peers).Link);
     }
@@ -164,7 +169,7 @@ public class PeerDirectoryTests
             ["dd99887766"] = "ann",
         };
 
-        var peers = await Build().GetPeersAsync(MyNodeId, remembered, default);
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, remembered, default);
 
         Assert.Equal(new[] { "zoe", "chris", "bea", "ann" },
             peers.Select(p => p.DisplayName).ToArray());
@@ -191,7 +196,7 @@ public class PeerDirectoryTests
             ["dd99887766"] = "jo",
         };
 
-        var peers = await Build().GetPeersAsync(MyNodeId, remembered, default);
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, remembered, default);
 
         Assert.Equal("1.0.0", peers.Single(p => p.NodeId == "bb11223344").AppVersion);
         Assert.Equal(string.Empty, peers.Single(p => p.NodeId == "ee11112222").AppVersion);
@@ -208,7 +213,7 @@ public class PeerDirectoryTests
             ["aa11223344"] = "sam",
         };
 
-        var peers = await Build().GetPeersAsync(MyNodeId, remembered, default);
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, remembered, default);
 
         Assert.Equal(
             new[] { "aa11223344", "ff99887766" }, peers.Select(p => p.NodeId).ToArray());
@@ -229,10 +234,69 @@ public class PeerDirectoryTests
         _zeroTier.Quality["bb11223344"] = LinkQuality.Direct;
 
         var peers = await new PeerDirectory(_zeroTier, table)
-            .GetPeersAsync(MyNodeId, NoNames, default);
+            .GetPeersAsync(MyNodeId, NetworkId, NoNames, default);
 
         var peer = Assert.Single(peers);
         Assert.True(peer.IsOnline);
         Assert.False(peer.AppRunning);
+    }
+
+    // The controller of the network answers listpeers as a LEAF, so the LEAF
+    // filter of ZeroTierClient keeps it. The controller runs no app and plays
+    // no race, and a bare node ID names no friend. The list leaves it out.
+    [Fact]
+    public async Task The_controller_of_the_network_never_appears_in_the_list()
+    {
+        _zeroTier.Quality[ControllerNodeId] = LinkQuality.Direct;
+        _zeroTier.Quality["cc55667788"] = LinkQuality.Direct;
+
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, NoNames, default);
+
+        Assert.Equal("cc55667788", Assert.Single(peers).NodeId);
+    }
+
+    // A player who has not opened the app must stay in the list. That row tells
+    // a friend that the player is on the network. The controller row looks the
+    // same, so a filter on the state would take both rows away.
+    [Fact]
+    public async Task A_node_without_its_app_stays_while_the_controller_goes()
+    {
+        _zeroTier.Quality[ControllerNodeId] = LinkQuality.Direct;
+        _zeroTier.Quality["cc55667788"] = LinkQuality.Relayed;
+        var remembered = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["cc55667788"] = "sam",
+        };
+
+        var peers = await Build().GetPeersAsync(MyNodeId, NetworkId, remembered, default);
+
+        var peer = Assert.Single(peers);
+        Assert.Equal("sam", peer.DisplayName);
+        Assert.True(peer.IsOnline);
+        Assert.False(peer.AppRunning);
+    }
+
+    // The app holds no network ID before the player sets one, and a player can
+    // paste a part of an ID. No value here names a controller, so each value
+    // keeps every node. The value "88c5b1f339" is the hard one: it is a node
+    // ID, and a node of that ID is a player.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("88c5b1f339")]
+    [InlineData("88c5b1f33969ae6")]
+    [InlineData("88c5b1f33969ae660")]
+    [InlineData("88c5b1f33969ae6g")]
+    public async Task A_network_id_that_names_no_controller_keeps_every_node(
+        string networkId)
+    {
+        _zeroTier.Quality[ControllerNodeId] = LinkQuality.Direct;
+        _zeroTier.Quality["cc55667788"] = LinkQuality.Direct;
+
+        var peers = await Build().GetPeersAsync(MyNodeId, networkId, NoNames, default);
+
+        Assert.Equal(
+            new[] { ControllerNodeId, "cc55667788" },
+            peers.Select(peer => peer.NodeId).OrderBy(id => id, StringComparer.Ordinal));
     }
 }

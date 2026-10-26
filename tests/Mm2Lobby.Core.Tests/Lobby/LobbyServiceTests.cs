@@ -401,6 +401,118 @@ public class LobbyServiceTests : IDisposable
         Assert.Equal("10.147.17.42", service.MyAddress);
     }
 
+    // --- The reach of the last cycle ---------------------------------------
+
+    [Fact]
+    public void Reach_says_that_ZeroTier_gave_no_answer_before_the_first_cycle()
+    {
+        // The service has read nothing yet, so it must not claim a network.
+        var service = Build();
+
+        Assert.Equal(ZeroTierReach.NoAnswer, service.Reach);
+    }
+
+    [Fact]
+    public async Task Reach_says_that_ZeroTier_gave_no_answer_while_the_status_is_null()
+    {
+        // The client answers null for every failure of zerotier-cli. A stopped
+        // ZeroTier service is the failure that the owner met.
+        _zeroTier.Status = null;
+
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        Assert.Equal(ZeroTierReach.NoAnswer, service.Reach);
+    }
+
+    [Fact]
+    public async Task Reach_says_that_this_computer_has_no_address_while_the_network_is_null()
+    {
+        // ZeroTier answered, and this computer has not joined the network.
+        // That is another fact, and it takes another sentence in the window.
+        _zeroTier.Network = null;
+
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        Assert.Equal(ZeroTierReach.NoAddress, service.Reach);
+    }
+
+    [Fact]
+    public async Task Reach_says_that_this_computer_has_no_address_while_the_network_carries_none()
+    {
+        // The network row exists, and ZeroTier has given this computer no
+        // address on it. AnnounceAsync reads the address, so this state is as
+        // silent as a network that is null.
+        _zeroTier.Network = new ZeroTierNetwork(
+            "0123456789abcdef", "REQUESTING_CONFIGURATION", null, 24);
+
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        Assert.Equal(ZeroTierReach.NoAddress, service.Reach);
+    }
+
+    [Fact]
+    public async Task Reach_says_that_this_computer_is_on_the_network_after_a_cycle_that_read_both()
+    {
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        Assert.Equal(ZeroTierReach.OnTheNetwork, service.Reach);
+    }
+
+    [Fact]
+    public async Task A_cycle_that_reaches_no_address_announces_nothing_and_records_the_reach()
+    {
+        // This is the defect that the owner found. The cycle sends no
+        // announcement, and it throws nothing, so LastCycleFault stays null.
+        // Without the reach, no record of the silence reaches the player.
+        _zeroTier.Status = null;
+
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        Assert.Empty(_transport.Sent);
+        Assert.Null(service.LastCycleFault);
+        Assert.Equal(ZeroTierReach.NoAnswer, service.Reach);
+    }
+
+    [Fact]
+    public async Task Reach_follows_the_last_cycle_and_does_not_hold_an_old_answer()
+    {
+        // ZeroTier starts again, and the player must not choose Check again to
+        // see it. The next cycle reads the new state.
+        _zeroTier.Status = null;
+
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        Assert.Equal(ZeroTierReach.NoAnswer, service.Reach);
+
+        _zeroTier.Status = new ZeroTierStatus(true, "a09acf0233");
+        await service.RunCycleAsync(default);
+
+        Assert.Equal(ZeroTierReach.OnTheNetwork, service.Reach);
+    }
+
+    [Fact]
+    public async Task Reach_says_that_ZeroTier_gave_no_answer_after_a_network_that_went_away()
+    {
+        // The owner ran the app, and ZeroTier stopped later. The reach must
+        // follow that change, because the window gates Host and Join on it.
+        await using var service = Build();
+        await service.StartAsync(default);
+
+        Assert.Equal(ZeroTierReach.OnTheNetwork, service.Reach);
+
+        _zeroTier.Status = null;
+        _zeroTier.Network = null;
+        await service.RunCycleAsync(default);
+
+        Assert.Equal(ZeroTierReach.NoAnswer, service.Reach);
+    }
+
     [Fact]
     public async Task DisposeAsync_disposes_the_transport()
     {
@@ -682,6 +794,22 @@ public class LobbyServiceTests : IDisposable
 
         Assert.Equal("0123456789abcdef", _zeroTier.RequestedNetworkId);
         Assert.Equal("10.147.17.42", service.MyAddress);
+    }
+
+    // The service owns the network ID, and the directory leaves the controller
+    // of that network out of the list. This test reads the whole path, from the
+    // configuration to Peers. The controller of 0123456789abcdef is the node
+    // 0123456789.
+    [Fact]
+    public async Task RunCycleAsync_leaves_the_controller_of_the_network_out_of_the_peers()
+    {
+        _zeroTier.Quality["0123456789"] = LinkQuality.Direct;
+        _zeroTier.Quality["cc55667788"] = LinkQuality.Direct;
+        await using var service = Build();
+
+        await service.StartAsync(default);
+
+        Assert.Equal("cc55667788", Assert.Single(service.Peers).NodeId);
     }
 
     [Fact]

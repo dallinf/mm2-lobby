@@ -1,5 +1,6 @@
 using System.Reflection;
 using Mm2Lobby.Core.Configuration;
+using Mm2Lobby.Core.Diagnostics;
 using Mm2Lobby.Core.Launch;
 using Mm2Lobby.Core.Lobby;
 using Mm2Lobby.Core.Peers;
@@ -7,6 +8,7 @@ using Mm2Lobby.Core.Processes;
 using Mm2Lobby.Core.ZeroTier;
 using Mm2Lobby.Windows;
 using Mm2Lobby.Windows.Checks;
+using Mm2Lobby.Windows.Lobby;
 
 namespace Mm2Lobby.App;
 
@@ -34,6 +36,7 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
         + "rule, and it does not see a rule that you turned off.";
 
     private readonly ConfigStore _configStore;
+    private readonly ReportStore _reportStore;
     private readonly IZeroTierClient _zeroTier;
     private readonly ZeroTierFaultReader _zeroTierFaults;
     private readonly ZeroTierTokenGrant _zeroTierGrant;
@@ -47,6 +50,7 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
     private readonly TimeProvider _timeProvider;
 
     /// <param name="configStore">The store for the one configuration file.</param>
+    /// <param name="reportStore">The store for the one report file.</param>
     /// <param name="zeroTier">The client that reads ZeroTier.</param>
     /// <param name="zeroTierCommand">
     /// The ZeroTier command that the locator found. This is a value, not a
@@ -72,6 +76,7 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
     /// <param name="timeProvider">Drives the refresh timer of the lobby service.</param>
     public LobbyEnvironment(
         ConfigStore configStore,
+        ReportStore reportStore,
         IZeroTierClient zeroTier,
         ZeroTierCommand zeroTierCommand,
         Func<string?> readAccountId,
@@ -86,6 +91,7 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
         TimeProvider? timeProvider = null)
     {
         _configStore = configStore;
+        _reportStore = reportStore;
         _zeroTier = zeroTier;
         _zeroTierFaults = new ZeroTierFaultReader(plainRunner, zeroTierCommand);
 
@@ -111,6 +117,16 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
 
     public string AppVersion { get; }
 
+    public string ReportPath => _reportStore.FilePath;
+
+    public DateTimeOffset Now => _clock();
+
+    /// <summary>
+    /// The one launcher of the process. It holds no state between calls, so
+    /// one instance serves every press of the launch button.
+    /// </summary>
+    public ILobbyLauncher LobbyLauncher { get; } = new DirectPlayLobbyLauncher();
+
     public IReadOnlyList<CheckEntry> CreateChecks() => new[]
     {
         new CheckEntry(new ZeroTierCheck(
@@ -120,6 +136,13 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
         new CheckEntry(
             new FirewallCheck(_plainRunner, _elevatedRunner, Config),
             FirewallRepairHint),
+
+        // These two checks give advice. The app raced before they existed,
+        // and PreflightRunner.AllPassed therefore passes over them. Each one
+        // buys the one click start and nothing else. Both read the game path,
+        // so both stand after the Midtown Madness 2 check that writes it.
+        new CheckEntry(new LobbyRegistrationCheck(Config, _elevatedRunner)),
+        new CheckEntry(new CompatibilityModeCheck(Config)),
     };
 
     public LobbyService CreateLobby()
@@ -140,6 +163,8 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
 
     public void SaveConfig() => _configStore.Save(Config);
 
+    public void WriteReport(string text) => _reportStore.Write(text);
+
     public void LaunchGame(string gamePath) => _launcher.Launch(gamePath);
 
     /// <summary>Builds the environment that the real app uses.</summary>
@@ -155,6 +180,12 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
 
         return new LobbyEnvironment(
             new ConfigStore(ConfigStore.DefaultPath),
+
+            // The report sits beside the configuration file, in the folder of
+            // the app. The Desktop belongs to the player, and the folder of
+            // the program can sit on a network drive that is slow or that
+            // takes no write.
+            new ReportStore(ReportStore.DefaultPath),
             new ZeroTierClient(plainRunner, zeroTierCommand.FileName),
             zeroTierCommand,
             WindowsAccount.CurrentId,

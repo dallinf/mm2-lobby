@@ -32,7 +32,7 @@ public sealed record CheckRow(
         // Fix only beside a failed check never reaches that repair.
         return new CheckRow(
             result.Name,
-            MarkOf(result.Status),
+            MarkOf(result.Status, result.Blocks),
             result.Message,
             (passed ? repairHint : result.FixDescription) ?? string.Empty,
             passed ? "Repair" : "Fix",
@@ -48,7 +48,7 @@ public sealed record CheckRow(
     /// <param name="name">The name of the check.</param>
     public static CheckRow Stale(string name) => new(
         name,
-        MarkOf(CheckStatus.Unavailable),
+        MarkOf(CheckStatus.Unavailable, blocks: true),
         "The network ID changed. Choose Check again.",
         string.Empty,
         "Fix",
@@ -57,10 +57,18 @@ public sealed record CheckRow(
         // has would run against an unknown state.
         false);
 
-    private static string MarkOf(CheckStatus status) => status switch
+    /// <param name="status">The state that the check reported.</param>
+    /// <param name="blocks">
+    /// False for an advisory check. The window shows an advisory row beside
+    /// the others, so the mark must say that the race goes on. A row that read
+    /// Problem would tell the player that the app stopped, and the app did not
+    /// stop.
+    /// </param>
+    private static string MarkOf(CheckStatus status, bool blocks) => (status, blocks) switch
     {
-        CheckStatus.Pass => "OK",
-        CheckStatus.Fail => "Problem",
+        (CheckStatus.Pass, _) => "OK",
+        (_, false) => "Optional",
+        (CheckStatus.Fail, _) => "Problem",
         _ => "Unknown",
     };
 }

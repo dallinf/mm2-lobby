@@ -80,4 +80,44 @@ public class CheckRowTests
 
         Assert.Equal(string.Empty, row.Advice);
     }
+
+    private static CheckResult Advisory(CheckStatus status)
+        => new("Compatibility mode", status, "The game runs in WINXPSP2.", "Press Fix.")
+        {
+            Blocks = false,
+        };
+
+    [Theory]
+    [InlineData(CheckStatus.Fail)]
+    [InlineData(CheckStatus.Unavailable)]
+    public void From_marks_an_advisory_row_that_does_not_pass_as_optional(CheckStatus status)
+    {
+        // The row must not read like a blocking row. A player who reads
+        // Problem beside this row believes that the race stopped, and the
+        // race did not stop.
+        var row = CheckRow.From(Advisory(status), null);
+
+        Assert.Equal("Optional", row.Mark);
+    }
+
+    [Fact]
+    public void From_marks_an_advisory_row_that_passes_as_OK()
+    {
+        var row = CheckRow.From(Advisory(CheckStatus.Pass), null);
+
+        Assert.Equal("OK", row.Mark);
+    }
+
+    [Fact]
+    public void From_still_offers_Fix_on_an_advisory_row()
+    {
+        // The window shows the row, the reason and the button. Only the gate
+        // on Host and Join ignores this check.
+        var row = CheckRow.From(Advisory(CheckStatus.Fail), null);
+
+        Assert.True(row.ShowAction);
+        Assert.Equal("Fix", row.ActionLabel);
+        Assert.Equal("The game runs in WINXPSP2.", row.Message);
+        Assert.Equal("Press Fix.", row.Advice);
+    }
 }

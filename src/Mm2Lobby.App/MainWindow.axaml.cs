@@ -67,17 +67,20 @@ public sealed partial class MainWindow : Window
         => SetupScroll.MaxHeight = Math.Max(140, e.NewSize.Height - 490);
 
     /// <summary>
-    /// Gives the text of the two boxes to the view model. Each binding writes
-    /// when the box loses the focus, and a player who types in a box and then
+    /// Gives the text of the two boxes to the view model, which saves the name
+    /// and then writes the report of this session. Each binding writes when
+    /// the box loses the focus, and a player who types in a box and then
     /// closes the window never gives it that focus.
     /// </summary>
+    /// <remarks>
+    /// The view model holds the order of that work, and a test proves it. The
+    /// report also runs here and not after the close, because the view model
+    /// tears the lobby down then: the report would hold an empty list of
+    /// players and the title of a window that already stopped.
+    /// </remarks>
     private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
-    {
-        if (Model is not { } model) return;
-
-        model.DisplayName = NameBox.Text ?? string.Empty;
-        model.ZeroTierNetworkId = NetworkIdBox.Text ?? string.Empty;
-    }
+        => Model?.OnTheWindowClosing(
+            NameBox.Text ?? string.Empty, NetworkIdBox.Text ?? string.Empty);
 
     private async void OnJoinClick(object? sender, RoutedEventArgs e)
     {

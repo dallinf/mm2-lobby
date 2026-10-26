@@ -29,9 +29,15 @@
 
   <!-- The runtime belongs to a publish only. A RuntimeIdentifier in the group
        above reaches every build through the project reference of the test
-       project, and then no test runs at all on macOS. -->
+       project, and then no test runs at all on macOS.
+
+       WARNING: do not change win-x86 to win-x64. Windows 11 ships a 32 bit
+       dplayx.dll only. A 64 bit process cannot load DirectPlay, so
+       LobbyLaunchPreconditions reports WrongProcessBitness and the app starts
+       MM2 the ordinary way on every press. The player then types the address
+       of the host, and the one click start of this app never runs. -->
   <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RuntimeIdentifier>win-x86</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
   </PropertyGroup>
 
