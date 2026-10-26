@@ -396,7 +396,7 @@ player sees the whole list at once rather than one problem per attempt.
 | ZeroTier | yes | `IZeroTierClient` reports the service online and the network status `OK` | Open the download page, or start the service, or show the network ID to join |
 | DirectPlay | yes | `C:\Windows\SysWOW64\dplayx.dll` exists | Run `dism /online /enable-feature /featurename:DirectPlay /all`, with an elevation prompt |
 | MM2 found | yes | Enumerate the values under `HKLM\SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Midtown Madness 2` and take the first that points at an existing `midtown2.exe`; otherwise use the saved path | Open a file picker and save the path |
-| Firewall | yes | `netsh advfirewall firewall show rule name="MM2 Lobby - Midtown Madness 2"` finds the rule | Add inbound and outbound allow rules, with an elevation prompt |
+| Firewall | yes | `netsh advfirewall firewall show rule name="MM2 Lobby - Midtown Madness 2"` finds the rule of each direction, and `name="MM2 Lobby - the lobby app (inbound)"` finds the rule of this app | Add an inbound rule and an outbound rule for the game, and an inbound rule for this app. Each rule costs one elevation prompt |
 | DirectPlay registration | no | The key `MM2 Lobby - Midtown Madness 2` under `HKLM\SOFTWARE\WOW6432Node\Microsoft\DirectPlay\Applications` holds the application GUID of the group, names this computer's `midtown2.exe`, starts its `File` value with a backslash, and holds no `Launcher` value | Import one registry script with `reg import`, with one elevation prompt. The script writes `Guid`, `Path`, `File`, `CommandLine` and `CurrentDirectory`, and it deletes `Launcher` |
 | Compatibility mode | no | The value of `midtown2.exe` under `HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers` holds no legacy operating system token | Remove the operating system tokens and keep every other token. The key belongs to the account of the player, so this fix needs no elevation |
 
@@ -482,7 +482,11 @@ setup panel opens while any check does not pass, blocking or not, so a player
 always reads the offer.
 
 The firewall check matters most. When the firewall blocks the game, MM2 fails
-silently and reports only that it found no host.
+silently and reports only that it found no host. When the firewall blocks this
+app, the app receives no announcement, the player list stays empty, and every
+friend still sees the player. So the fix also adds an inbound rule for the
+program file of this app. Windows permits outbound traffic by default, so this
+app needs no outbound rule of its own.
 
 ### 5.7 GameLauncher
 

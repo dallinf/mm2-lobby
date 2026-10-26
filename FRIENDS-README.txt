@@ -96,8 +96,10 @@ permission. Choose Yes each time.
                       picker at midtown2.exe in your game folder. The program
                       accepts that file name only.
 
-  Windows Firewall    Choose Fix. The Fix adds two rules, so the firewall
-                      stops no race. Windows asks for permission two times.
+  Windows Firewall    Choose Fix. The Fix adds three rules. Two rules let the
+                      firewall stop no race. One rule lets this program read
+                      the names of your friends. Windows asks for permission
+                      three times.
 
 After each Fix, choose Check again. The Host button and the Join button stay
 inactive until all four rows pass.

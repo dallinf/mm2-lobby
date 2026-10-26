@@ -26,8 +26,11 @@ namespace Mm2Lobby.App;
 public sealed class LobbyEnvironment : ILobbyEnvironment
 {
     private const string FirewallRepairHint =
-        "A rule can still name an old game folder, and the check cannot see that. "
+        "A rule can still name an old folder, and the check cannot see that. "
         + "If you moved Midtown Madness 2, or installed it again, choose Repair. "
+        + "If you moved this app, choose Repair. "
+        + "If every check passes and the window shows no friend, open Windows "
+        + "Defender Firewall and look for a Block rule for this app. "
         + "If every check passes and MM2 still finds no host, open Windows "
         + "Defender Firewall and look at the rules for midtown2.exe. "
         + "A Block rule wins over the allow rules of this app. "
@@ -134,7 +137,11 @@ public sealed class LobbyEnvironment : ILobbyEnvironment
         new CheckEntry(new DirectPlayCheck(_elevatedRunner)),
         new CheckEntry(new GamePathCheck(Config, _configStore, _findTheGame, _askForTheGame)),
         new CheckEntry(
-            new FirewallCheck(_plainRunner, _elevatedRunner, Config),
+            new FirewallCheck(
+                _plainRunner,
+                _elevatedRunner,
+                Config,
+                System.Environment.ProcessPath ?? string.Empty),
             FirewallRepairHint),
 
         // These two checks give advice. The app raced before they existed,
