@@ -249,6 +249,10 @@ public class DirectPlayLobbyLauncherSessionTests : IDisposable
         Assert.Equal(2, _api.AddressCalls.Count);
         Assert.Equal(IntPtr.Zero, _api.AddressCalls[0].Buffer);
         Assert.NotEqual(IntPtr.Zero, _api.AddressCalls[1].Buffer);
+
+        // Both passes send the same two chunks. A size pass that counted one
+        // chunk would ask for too few bytes.
+        Assert.Equal(2u, _api.AddressCalls[0].ElementCount);
         Assert.Equal(2u, _api.AddressCalls[1].ElementCount);
     }
 
