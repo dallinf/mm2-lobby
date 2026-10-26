@@ -844,6 +844,11 @@ public class LobbyViewModelTests : IDisposable
         model.StartGame();
 
         Assert.Contains("midtown2.exe is missing", model.StatusMessage);
+
+        // The label must not promise a second start of a game that never
+        // started. The status line and the button must say the same thing.
+        Assert.Equal("Start the race", model.StartGameButtonText);
+        Assert.Empty(_environment.LaunchedPaths);
     }
 
     // --- The launch button -------------------------------------------------

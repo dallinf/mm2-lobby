@@ -1265,8 +1265,8 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             // The app does what it did before the lobby path existed. The
             // window shows the address, and the player types it into MM2. No
-            // player is worse off than he was.
-            _path = LaunchPath.Ordinary;
+            // player is worse off than he was. The method marks the path,
+            // because a start that throws leaves no game and no second start.
             StatusMessage = StartTheGameTheOrdinaryWay() + AdviceOf(result);
         }
 
@@ -1433,6 +1433,12 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
     /// Starts MM2 the way that the app started it before the lobby path
     /// existed. It returns the message for the player.
     /// </summary>
+    /// <remarks>
+    /// This method marks the ordinary path only after the start works. The
+    /// label of the launch button follows that path. A start that throws
+    /// leaves no game, so the button must still offer the first start and not
+    /// a second one.
+    /// </remarks>
     private string StartTheGameTheOrdinaryWay()
     {
         var path = _environment.Config.GamePath;
@@ -1440,6 +1446,7 @@ public sealed class LobbyViewModel : INotifyPropertyChanged, IAsyncDisposable
         try
         {
             _environment.LaunchGame(path);
+            _path = LaunchPath.Ordinary;
             return OrdinaryStartMessage;
         }
         catch (Exception e)
