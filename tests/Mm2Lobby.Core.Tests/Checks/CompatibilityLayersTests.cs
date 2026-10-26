@@ -14,7 +14,7 @@ public class CompatibilityLayersTests
     public void The_table_holds_the_modes_to_test()
     {
         // Without this test, every loop below would pass over an empty table.
-        Assert.NotEmpty(CompatibilityLayers.OperatingSystemModes);
+        Assert.NotEmpty(CompatibilityLayers.ModesThatDemandElevation);
     }
 
     [Theory]
@@ -29,7 +29,45 @@ public class CompatibilityLayersTests
     [InlineData("WIN8RTM")]
     public void The_table_names_every_known_operating_system_mode(string mode)
     {
-        Assert.Contains(mode, CompatibilityLayers.OperatingSystemModes);
+        Assert.Contains(mode, CompatibilityLayers.ModesThatDemandElevation);
+    }
+
+    // A player sets this box by hand on an old game, and the computer of the
+    // owner carries RUNASADMIN on another game. Windows then asks for
+    // administrator rights, and the one press start cannot answer.
+    [Theory]
+    [InlineData("RUNASADMIN")]
+    [InlineData("RUNASHIGHEST")]
+    public void The_table_names_the_token_that_runs_the_game_as_an_administrator(string mode)
+    {
+        Assert.Contains(mode, CompatibilityLayers.ModesThatDemandElevation);
+    }
+
+    [Theory]
+    [InlineData("RUNASADMIN")]
+    [InlineData("RUNASHIGHEST")]
+    public void ModesIn_reports_the_token_that_runs_the_game_as_an_administrator(string mode)
+    {
+        Assert.Equal(new[] { mode }, CompatibilityLayers.ModesIn($"~ {mode}"));
+    }
+
+    [Fact]
+    public void Without_removes_the_token_that_runs_the_game_as_an_administrator()
+    {
+        Assert.Equal(
+            "~ DWM8And16BitMitigation",
+            CompatibilityLayers.Without("~ RUNASADMIN DWM8And16BitMitigation"));
+        Assert.Equal(
+            "~ DWM8And16BitMitigation",
+            CompatibilityLayers.Without("~ RUNASHIGHEST DWM8And16BitMitigation"));
+    }
+
+    [Fact]
+    public void Without_keeps_the_token_that_runs_the_game_as_the_player()
+    {
+        // RUNASINVOKER is the opposite of RUNASADMIN. It asks for no rights,
+        // so the fix keeps it.
+        Assert.Equal("~ RUNASINVOKER", CompatibilityLayers.Without("~ RUNASADMIN RUNASINVOKER"));
     }
 
     [Fact]

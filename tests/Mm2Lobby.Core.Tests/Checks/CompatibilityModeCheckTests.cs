@@ -107,6 +107,33 @@ public class CompatibilityModeCheckTests
             result.Message);
     }
 
+    // RUNASADMIN is the box that a player sets by hand on an old game: "Run
+    // this program as an administrator". The row passed over it before, and
+    // the one press start then failed with DirectPlay code 300.
+    [Fact]
+    public async Task Fails_when_the_game_runs_as_an_administrator()
+    {
+        _layers = "~ RUNASADMIN";
+
+        var result = await Check().RunAsync(default);
+
+        Assert.Equal(CheckStatus.Fail, result.Status);
+        Assert.Contains("RUNASADMIN", result.Message);
+        Assert.Contains("administrator rights", result.Message);
+        Assert.NotNull(result.FixDescription);
+    }
+
+    [Fact]
+    public async Task The_fix_removes_the_token_that_runs_the_game_as_an_administrator()
+    {
+        _layers = "~ RUNASADMIN DWM8And16BitMitigation";
+
+        var result = await Check().FixAsync(default);
+
+        Assert.Equal(CheckStatus.Pass, result.Status);
+        Assert.Equal("~ DWM8And16BitMitigation", Assert.Single(_writes));
+    }
+
     [Fact]
     public async Task Fails_and_names_both_modes_that_the_game_carries()
     {

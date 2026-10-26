@@ -6,19 +6,21 @@ using Mm2Lobby.Core.Preflight;
 namespace Mm2Lobby.Windows.Checks;
 
 /// <summary>
-/// This check looks for a legacy compatibility mode on Midtown Madness 2. A
-/// mode such as WINXPSP2 makes Windows ask for administrator rights, and the
-/// lobby launch cannot answer that question. The game runs correctly on
-/// Windows 11 with no mode, which the owner proved by playing it.
+/// This check looks for a compatibility mode on Midtown Madness 2 that makes
+/// Windows ask for administrator rights. A legacy mode such as WINXPSP2 does
+/// that. The box "Run this program as an administrator" does the same, and it
+/// writes the token RUNASADMIN. The lobby launch cannot answer that question.
+/// The game runs correctly on Windows 11 with no mode, which the owner proved
+/// by playing it.
 /// </summary>
 /// <remarks>
 /// The modes live in HKCU, which belongs to the account of the player. So the
 /// fix needs no administrator rights and no elevated runner. This check is the
 /// one check of the app that fixes something with no permission prompt.
 /// <para>
-/// The fix removes only the tokens that name a legacy version of Windows.
-/// CompatibilityLayers holds that table and holds the rule. A player can carry
-/// other tokens, and the fix keeps every one of them.
+/// The fix removes only the tokens that make Windows demand administrator
+/// rights. CompatibilityLayers holds that table and holds the rule. A player
+/// can carry other tokens, and the fix keeps every one of them.
 /// </para>
 /// </remarks>
 public sealed class CompatibilityModeCheck : ICheck

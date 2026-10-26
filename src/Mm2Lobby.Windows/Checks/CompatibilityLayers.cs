@@ -6,8 +6,9 @@ namespace Mm2Lobby.Windows.Checks;
 /// <c>~ WINXPSP2 RUNASINVOKER</c>.
 /// <para>
 /// A legacy operating system mode makes Windows ask for administrator rights,
-/// and the lobby launch cannot answer that question. So the fix removes those
-/// modes. A player can carry other tokens, and the computer of the owner shows
+/// and the lobby launch cannot answer that question. A token that runs the
+/// game as an administrator does the same. So the fix removes those tokens. A
+/// player can carry other tokens, and the computer of the owner shows
 /// DWM8And16BitMitigation on other games. The fix keeps every token that the
 /// table below does not name.
 /// </para>
@@ -19,16 +20,19 @@ namespace Mm2Lobby.Windows.Checks;
 internal static class CompatibilityLayers
 {
     /// <summary>
-    /// The tokens that name a legacy version of Windows. Only these tokens
-    /// make Windows demand elevation, and only these tokens does the fix
-    /// remove.
+    /// The tokens that the fix removes. The first group names a legacy version
+    /// of Windows. The second group runs the game as an administrator, which a
+    /// player sets by hand on the Compatibility tab of the file properties.
     /// <para>
-    /// WARNING: a token that is missing here stays on the game, and the check
-    /// then passes over a mode that still breaks the launch. Add a token when
-    /// a run finds one.
+    /// WARNING: this table names the tokens that the group has seen, and
+    /// Windows accepts more tokens than these. A token that is missing here
+    /// stays on the game, and the check then passes over a setting that still
+    /// breaks the launch. Add a token when a run finds one. Do not add a token
+    /// that nobody has seen, because the fix then removes a setting of the
+    /// player for no reason.
     /// </para>
     /// </summary>
-    public static readonly IReadOnlyList<string> OperatingSystemModes =
+    public static readonly IReadOnlyList<string> ModesThatDemandElevation =
     [
         "WIN95",
         "WIN98",
@@ -39,26 +43,28 @@ internal static class CompatibilityLayers
         "VISTASP2",
         "WIN7RTM",
         "WIN8RTM",
+        "RUNASADMIN",
+        "RUNASHIGHEST",
     ];
 
     /// <summary>
-    /// This method gives every legacy mode of the value, in the order of the
-    /// value. It gives the token as the registry writes it, so the player
-    /// reads the same word that the properties of the file show.
+    /// This method gives every mode of the value that demands elevation, in
+    /// the order of the value. It gives the token as the registry writes it,
+    /// so the player reads the same word that the properties of the file show.
     /// </summary>
     /// <param name="value">The value of the game under the Layers key, or null.</param>
     public static IReadOnlyList<string> ModesIn(string? value)
-        => Tokens(value).Where(IsOperatingSystemMode).ToList();
+        => Tokens(value).Where(DemandsElevation).ToList();
 
     /// <summary>
-    /// This method gives the value with every legacy mode taken out. It gives
-    /// null when nothing is left to keep, and the check then deletes the whole
-    /// value.
+    /// This method gives the value with every mode of the table taken out. It
+    /// gives null when nothing is left to keep, and the check then deletes the
+    /// whole value.
     /// </summary>
     /// <param name="value">The value of the game under the Layers key, or null.</param>
     public static string? Without(string? value)
     {
-        var kept = Tokens(value).Where(one => !IsOperatingSystemMode(one)).ToList();
+        var kept = Tokens(value).Where(one => !DemandsElevation(one)).ToList();
 
         // The tilde marks the entry and names no setting. A value that holds
         // the tilde alone therefore means nothing, so the check deletes it.
@@ -83,8 +89,8 @@ internal static class CompatibilityLayers
         return $"the {names} {word}";
     }
 
-    private static bool IsOperatingSystemMode(string token)
-        => OperatingSystemModes.Contains(token, StringComparer.OrdinalIgnoreCase);
+    private static bool DemandsElevation(string token)
+        => ModesThatDemandElevation.Contains(token, StringComparer.OrdinalIgnoreCase);
 
     private static string[] Tokens(string? value)
         => value?.Split(' ', StringSplitOptions.RemoveEmptyEntries
